@@ -118,6 +118,16 @@ int main() {
         // files — a 3 GB upload arrives as many bounded PATCHes.
         drogon::app().setClientMaxBodySize(kMaxRequestBody);
 
+        // Drogon builds a 256-directory scratch tree for multipart uploads at startup,
+        // relative to the working directory. Nothing here uses its multipart handling —
+        // tus writes files directly — but it creates the tree regardless, and logs 256
+        // permission errors when the working directory is not writable, which it is not
+        // for a container running as a non-root user.
+        const std::filesystem::path uploadScratch =
+            std::filesystem::temp_directory_path() / "thearchive-upload-scratch";
+        std::filesystem::create_directories(uploadScratch);
+        drogon::app().setUploadPath(uploadScratch.string());
+
         drogon::app()
             .addListener(bind, port)
             .setThreadNum(0)  // one event loop per hardware thread
