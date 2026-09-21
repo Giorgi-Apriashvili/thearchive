@@ -1,0 +1,101 @@
+# TheArchive
+
+A self-hosted file drop for a closed group of friends. Upload files, get a link, share it,
+they download. Links expire after 30 days by default and the disk space comes back.
+
+**Stack:** C++20 / Drogon · SQLite · Svelte 5 + Vite · Caddy · Docker Compose
+
+See [docs/DESIGN.md](docs/DESIGN.md) for the architecture and the reasoning behind it.
+
+## Layout
+
+```
+server/      C++ backend (Drogon)
+web/         Svelte 5 frontend (Vite)
+scripts/     dev environment bootstrap
+docs/        design notes
+```
+
+## Development
+
+Linux, or WSL on Windows. The bootstrap script handles Arch and Debian/Ubuntu; pick
+whichever matches your deployment target so package names and toolchain versions line up.
+
+On Windows, enter WSL **first** — running these in PowerShell configures a Windows build
+against MSVC, which is not what this targets and which needs vcpkg to supply jsoncpp,
+OpenSSL and zlib.
+
+```bash
+# one time
+./scripts/dev-setup.sh
+
+# backend — the build directory lives in the WSL filesystem, NOT under /mnt/e.
+# Compiling across the Windows/Linux boundary is drastically slower.
+cmake -S server -B ~/build-thearchive -G Ninja -DCMAKE_BUILD_TYPE=Release   # once
+cmake --build ~/build-thearchive -j$(nproc)                                 # thereafter
+
+ARCHIVE_DATA_DIR=/tmp/archive-test ~/build-thearchive/thearchive
+curl -s localhost:8080/healthz                 # {"schema":1,"status":"ok"}
+
+# frontend — Vite serves the app on :5173 and proxies /api, /files, /d and /healthz
+# to the backend, so cookies behave exactly as they will in production.
+cd web && npm install && npm run dev
+```
+
+For a production-shaped run, build the frontend and let the C++ server serve it:
+
+```bash
+cd web && npm run build          # -> web/dist
+ARCHIVE_WEB_ROOT=$PWD/dist ~/build-thearchive/thearchive
+```
+
+Without `ARCHIVE_WEB_ROOT` the server is API-only and `/` returns 404 — which is
+correct, not a fault. Unmatched non-API paths fall back to `index.html` so client-side
+routes like `/d/<token>` survive a refresh, while `/api/*` keeps its real status code.
+
+> `~` is your Windows profile in PowerShell but your Linux home inside WSL. If CMake
+> reports paths starting `C:/`, you are in the wrong shell.
+
+VS Code's CMake Tools extension is pointed at the *same* build tree, so the two never
+duplicate a Drogon compile. Pass `-DCMAKE_BUILD_TYPE` only on the first configure —
+repeating it on every run would fight the extension's selected variant and reconfigure
+the cache, which rebuilds Drogon from scratch each time.
+
+Configuring prints a deprecation warning about `cmake_minimum_required` in trantor.
+That is upstream's declared minimum, not a problem here — below 3.5 CMake 4 would
+refuse outright, which the `CMAKE_POLICY_VERSION_MINIMUM` shim in `server/CMakeLists.txt`
+exists to prevent. Pass `-Wno-deprecated` to silence it.
+
+Configuration is environment-only, so nothing needs mounting into the container:
+
+| Variable | Default | |
+| --- | --- | --- |
+| `ARCHIVE_DATA_DIR` | `./data` | blobs, in-progress uploads and the SQLite file |
+| `ARCHIVE_BIND` | `127.0.0.1` | Caddy is the only thing that should reach this |
+| `ARCHIVE_PORT` | `8080` | |
+| `ARCHIVE_PUBLIC_URL` | `http://localhost:8080` | used to build share links; cannot be inferred from behind a proxy |
+| `ARCHIVE_SECURE_COOKIES` | on | set `0` for plain-HTTP local dev, or login never persists |
+| `ARCHIVE_MAX_UPLOAD_BYTES` | 20 GiB | advertised as `Tus-Max-Size` |
+| `ARCHIVE_GC_INTERVAL_SECONDS` | 900 | expiry sweep cadence |
+| `ARCHIVE_BLOB_GRACE_SECONDS` | 86400 | how long an unreferenced blob is kept — see DESIGN.md |
+| `ARCHIVE_WEB_ROOT` | unset | built frontend to serve; unset means API-only |
+
+## Tests
+
+Both drive a real server over HTTP; neither needs a fixture or a mock.
+
+```bash
+./server/tests/smoke.sh    # auth + tus, incl. an interrupted and resumed upload
+./server/tests/shares.sh   # shares, downloads, ranges, expiry sweep
+```
+
+On Windows, VS Code's own IntelliSense shows phantom errors in the C++ files: it has
+neither `sqlite3.h` nor libstdc++ on its include path. Open the folder through the WSL
+remote extension and use clangd, which reads the generated `compile_commands.json`.
+
+## Deployment
+
+```bash
+ssh <server>
+cd /srv/thearchive && git pull && docker compose up -d --build
+```

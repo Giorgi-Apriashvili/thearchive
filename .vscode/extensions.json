@@ -1,0 +1,12 @@
+{
+  "recommendations": [
+    "llvm-vs-code-extensions.vscode-clangd",
+    "ms-vscode-remote.remote-wsl",
+    "svelte.svelte-vscode"
+  ],
+  // cpptools' own IntelliSense cannot resolve this project's headers, which live in
+  // the Linux sysroot. clangd running inside WSL is the only engine that sees them.
+  "unwantedRecommendations": [
+    "ms-vscode.cpptools"
+  ]
+}
