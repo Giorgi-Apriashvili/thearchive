@@ -147,12 +147,21 @@ constexpr const char* kSchemaV5 = R"SQL(
 ALTER TABLE blobs ADD COLUMN released_at INTEGER;
 )SQL";
 
-constexpr std::array<Migration, 5> kMigrations{{
+// ZIP entries carry a CRC-32 in their local header, ahead of the data. A streaming
+// archive therefore needs it before it has read the file, so it is computed during
+// upload in the same pass as the SHA-256 and kept here. Null for blobs that predate this
+// column; those are backfilled on first use.
+constexpr const char* kSchemaV6 = R"SQL(
+ALTER TABLE blobs ADD COLUMN crc32 INTEGER;
+)SQL";
+
+constexpr std::array<Migration, 6> kMigrations{{
     {1, kSchemaV1},
     {2, kSchemaV2},
     {3, kSchemaV3},
     {4, kSchemaV4},
     {5, kSchemaV5},
+    {6, kSchemaV6},
 }};
 
 }  // namespace

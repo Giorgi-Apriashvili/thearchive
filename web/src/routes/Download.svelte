@@ -41,6 +41,12 @@
     return unlocked ? `${base}?p=${encodeURIComponent(unlocked)}` : base
   }
 
+  const archiveUrl = $derived(
+    unlocked ? `/d/${token}/all.zip?p=${encodeURIComponent(unlocked)}` : `/d/${token}/all.zip`,
+  )
+
+  const totalBytes = $derived(share?.files.reduce((sum, f) => sum + f.size, 0) ?? 0)
+
   const remaining = $derived(
     share?.max_downloads ? share.max_downloads - share.download_count : null,
   )
@@ -83,7 +89,23 @@
       {/if}
     </p>
 
-    <ul class="mt-8 divide-y divide-ink-800 rounded-xl border border-ink-800">
+    {#if share.files.length > 1}
+      <!-- A plain link, not a fetch: the archive is generated as it is sent and carries
+           a real Content-Length, so the browser's own download UI shows accurate
+           progress and an ETA. Intercepting it in JavaScript would replace that with
+           something worse. -->
+      <a
+        href={archiveUrl}
+        class="mt-8 flex items-center justify-between gap-4 rounded-xl border border-accent/40 bg-accent/5 px-4 py-3 transition hover:bg-accent/10"
+      >
+        <span class="text-sm font-medium text-accent">
+          Download all {share.files.length} files
+        </span>
+        <span class="tnum shrink-0 text-xs text-ink-500">{bytes(totalBytes)} · .zip</span>
+      </a>
+    {/if}
+
+    <ul class="mt-4 divide-y divide-ink-800 rounded-xl border border-ink-800">
       {#each share.files as file (file.id)}
         <li class="flex items-center justify-between gap-4 px-4 py-3">
           <div class="min-w-0">

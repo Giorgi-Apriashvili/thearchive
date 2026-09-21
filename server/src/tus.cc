@@ -211,6 +211,7 @@ std::string promoteToBlob(Database& db, const fs::path& dataDir, const std::stri
     // state across PATCHes: chunks may arrive on different connections and threads, and
     // a sequential NVMe read is far cheaper than persisting digest state correctly.
     crypto::Sha256 hasher;
+    crypto::Crc32 crc;
     {
         const int fd = ::open(source.c_str(), O_RDONLY);
         if (fd < 0) {
@@ -220,6 +221,8 @@ std::string promoteToBlob(Database& db, const fs::path& dataDir, const std::stri
         ssize_t got = 0;
         while ((got = ::read(fd, buffer.data(), buffer.size())) > 0) {
             hasher.update(buffer.data(), static_cast<std::size_t>(got));
+            // Same pass: the ZIP writer needs this before it can emit the entry header.
+            crc.update(buffer.data(), static_cast<std::size_t>(got));
         }
         const int readError = (got < 0) ? errno : 0;
         ::close(fd);
@@ -250,8 +253,9 @@ std::string promoteToBlob(Database& db, const fs::path& dataDir, const std::stri
     // original uploader and first-seen time are the interesting provenance and are kept.
     auto insert = db.prepare(
         "INSERT INTO blobs (sha256, size, refcount, created_at, content_type, "
-        "first_uploader, last_referenced_at) VALUES (?, ?, 0, ?, ?, ?, ?) "
-        "ON CONFLICT(sha256) DO UPDATE SET last_referenced_at = excluded.last_referenced_at");
+        "first_uploader, last_referenced_at, crc32) VALUES (?, ?, 0, ?, ?, ?, ?, ?) "
+        "ON CONFLICT(sha256) DO UPDATE SET last_referenced_at = excluded.last_referenced_at, "
+        "crc32 = COALESCE(blobs.crc32, excluded.crc32)");
     const std::int64_t now = nowSeconds();
     insert.bind(1, hash)
         .bind(2, size)
@@ -259,6 +263,7 @@ std::string promoteToBlob(Database& db, const fs::path& dataDir, const std::stri
         .bind(4, detectedType)
         .bind(5, uploaderId)
         .bind(6, now)
+        .bind(7, static_cast<std::int64_t>(crc.value()))
         .run();
 
     auto complete = db.prepare(

@@ -53,7 +53,7 @@ curl -s -o /dev/null -c "$JAR" -X POST "$BASE/api/auth/bootstrap" \
 upload() {
     local file="$1" size meta loc
     size=$(stat -c%s "$file")
-    meta="filename $(basename "$file" | base64 -w0),lastModified $(printf '1700000000000' | base64 -w0),relativePath $(printf 'sat/night.bin' | base64 -w0)"
+    meta="filename $(basename "$file" | base64 -w0),lastModified $(printf '1700000000000' | base64 -w0),relativePath $(printf 'sat/%s' "$(basename "$file")" | base64 -w0)"
     loc=$(curl -s -D - -o /dev/null -b "$JAR" -X POST "$BASE/files" \
         -H "Upload-Length: $size" -H "Upload-Metadata: $meta" | hdr Location)
     curl -s -o /dev/null -b "$JAR" -X PATCH "$BASE$loc" \
@@ -205,6 +205,48 @@ gcwait
 check "its row is gone too" "$(sql "SELECT COUNT(*) FROM blobs WHERE sha256='$SOLO';")" "0"
 
 echo
+echo "=== download all as a streaming zip ==="
+# Two files sharing a name, so the writer has to disambiguate rather than let one
+# silently overwrite the other on extraction.
+mkdir -p "$WORK/z"
+head -c 120000 /dev/urandom > "$WORK/z/photo.jpg"
+head -c  80000 /dev/urandom > "$WORK/z/clip.mp4"
+UZ1=$(upload "$WORK/z/photo.jpg")
+UZ2=$(upload "$WORK/z/clip.mp4")
+# Same name, different bytes — two phones both producing photo.jpg.
+cp "$WORK/z/photo.jpg" "$WORK/z/first-photo.jpg"
+head -c 55000 /dev/urandom > "$WORK/z/photo.jpg"
+UZ3=$(upload "$WORK/z/photo.jpg")
+TOKZ=$(curl -s -b "$JAR" -X POST "$BASE/api/shares" -H 'Content-Type: application/json' \
+    -d "{\"uploads\":[\"$UZ1\",\"$UZ2\",\"$UZ3\"],\"title\":\"Night Out!\"}" | jget token)
+
+hdrs=$(curl -s -D - -o "$WORK/all.zip" "$BASE/d/$TOKZ/all.zip")
+check "zip served" "$(printf '%s' "$hdrs" | head -1 | tr -d '\r' | awk '{print $2}')" "200"
+declared=$(printf '%s' "$hdrs" | hdr Content-Length)
+actual=$(stat -c%s "$WORK/all.zip")
+check "Content-Length matches the body exactly" "$actual" "$declared"
+printf '%s' "$hdrs" | grep -qi 'content-disposition: attachment' && ok "zip is an attachment" \
+    || bad "zip is an attachment" "absent"
+printf '%s' "$hdrs" | grep -qi 'filename\*=UTF-8.*Night' && ok "archive named after the share" \
+    || bad "archive named after the share" "$(printf '%s' "$hdrs" | grep -i disposition)"
+
+unzip -t "$WORK/all.zip" >/dev/null 2>&1 && ok "archive passes unzip -t" \
+    || bad "archive passes unzip -t" "$(unzip -t "$WORK/all.zip" 2>&1 | tail -2)"
+check "holds three entries" "$(unzip -l "$WORK/all.zip" | tail -1 | awk '{print $2}')" "3"
+unzip -l "$WORK/all.zip" | grep -q 'photo (2).jpg' && ok "duplicate name disambiguated" \
+    || bad "duplicate name disambiguated" "$(unzip -l "$WORK/all.zip" | sed -n '4,7p')"
+
+rm -rf "$WORK/out" && mkdir -p "$WORK/out" && unzip -qq "$WORK/all.zip" -d "$WORK/out"
+check "extracted clip is byte-identical" \
+    "$(sha256sum "$WORK/out/sat/clip.mp4" | cut -d' ' -f1)" \
+    "$(sha256sum "$WORK/z/clip.mp4" | cut -d' ' -f1)"
+
+check "the whole archive counts as one download" \
+    "$(sql "SELECT download_count FROM shares WHERE token='$TOKZ';")" "1"
+check "zip of a password-protected link needs the password" \
+    "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/d/$TOK3/all.zip")" "401"
+
+echo
 echo "=== tus termination ==="
 head -c 131072 /dev/urandom > "$WORK/cancel.bin"
 CANCEL=$(sha256sum "$WORK/cancel.bin" | cut -d' ' -f1)
@@ -275,15 +317,19 @@ check "cannot remove from someone else's share" \
 echo
 echo "=== garbage collection ==="
 gcwait
-check "revoked share released its reference" "$(sql 'SELECT refcount FROM blobs;')" "2"
-check "blob survives while still referenced" "$(find "$DATA/blobs" -type f | wc -l)" "1"
+NIGHT_PATH="$DATA/blobs/${WANT:0:2}/${WANT:2:2}/$WANT"
+check "revoked share released its reference" \
+    "$(sql "SELECT refcount FROM blobs WHERE sha256='$WANT';")" "2"
+[ -f "$NIGHT_PATH" ] && ok "blob survives while still referenced" \
+    || bad "blob survives while still referenced" "deleted early"
 
 # The hazard the grace period exists for: a completed upload sits at refcount 0 until a
 # share is made. A sweep must not collect it in that window.
 U4=$(upload "$WORK/night.bin")
 gcwait
 check "unshared upload survives the sweep" "$(sql "SELECT COUNT(*) FROM uploads WHERE id='$U4';")" "1"
-check "its blob is still on disk" "$(find "$DATA/blobs" -type f | wc -l)" "1"
+[ -f "$NIGHT_PATH" ] && ok "its blob is still on disk" \
+    || bad "its blob is still on disk" "deleted"
 
 # Backdate everything past expiry and past the grace period, then let the sweep run.
 sql "UPDATE shares SET expires_at = strftime('%s','now') - 10;"
@@ -295,7 +341,7 @@ check "refcount drained" "$(sql 'SELECT COALESCE(SUM(refcount),0) FROM blobs;')"
 check "expired link 404s" "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/shares/$TOK")" "404"
 check "blob row deleted" "$(sql 'SELECT COUNT(*) FROM blobs;')" "0"
 check "blob file deleted" "$(find "$DATA/blobs" -type f | wc -l)" "0"
-check "share records kept for history" "$(sql 'SELECT COUNT(*) FROM shares;')" "5"
+check "share records kept for history" "$(sql 'SELECT COUNT(*) FROM shares;')" "6"
 check "incoming left clean" "$(find "$DATA/incoming" -type f | wc -l)" "0"
 
 echo

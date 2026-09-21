@@ -1,7 +1,10 @@
 #include "shares.h"
 
 #include <algorithm>
+#include <cctype>
+#include <cstdio>
 #include <cstdlib>
+#include <set>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -11,6 +14,7 @@
 #include "httputil.h"
 #include "mimetype.h"
 #include "storage.h"
+#include "zipstream.h"
 
 namespace archive {
 namespace {
@@ -196,6 +200,60 @@ RangeRequest parseRange(const std::string& header, std::size_t fileSize) {
     }
     out.result = RangeResult::Ok;
     return out;
+}
+
+// ZIP readers vary in how they handle duplicate paths, and a share can legitimately
+// contain two files called IMG_1234.jpg from different phones. Disambiguate rather than
+// let one silently overwrite the other on extraction.
+std::string uniqueName(const std::string& wanted, std::set<std::string>& used) {
+    if (used.insert(wanted).second) {
+        return wanted;
+    }
+    const std::size_t dot = wanted.find_last_of('.');
+    const std::string stem = dot == std::string::npos ? wanted : wanted.substr(0, dot);
+    const std::string ext = dot == std::string::npos ? "" : wanted.substr(dot);
+    for (int n = 2; n < 10000; ++n) {
+        std::string candidate = stem + " (" + std::to_string(n) + ")" + ext;
+        if (used.insert(candidate).second) {
+            return candidate;
+        }
+    }
+    return wanted;  // absurd collision count; let the reader decide
+}
+
+// Blobs stored before the crc32 column existed have none. Compute it once and keep it,
+// so this cost is paid at most a single time per blob.
+std::uint32_t backfillCrc32(Database& db, const fs::path& path, const std::string& hash) {
+    crypto::Crc32 crc;
+    if (std::FILE* fp = std::fopen(path.c_str(), "rb")) {
+        std::vector<char> buffer(1 << 20);
+        std::size_t got = 0;
+        while ((got = std::fread(buffer.data(), 1, buffer.size(), fp)) > 0) {
+            crc.update(buffer.data(), got);
+        }
+        std::fclose(fp);
+    }
+    auto stmt = db.prepare("UPDATE blobs SET crc32 = ? WHERE sha256 = ?");
+    stmt.bind(1, static_cast<std::int64_t>(crc.value())).bind(2, hash).run();
+    return crc.value();
+}
+
+// Filename for the archive itself. Falls back to the token so it is never empty, and
+// never carries a path separator into Content-Disposition.
+std::string archiveName(const std::string& title, const std::string& token) {
+    std::string base;
+    for (const char c : title) {
+        const bool safe = std::isalnum(static_cast<unsigned char>(c)) || c == ' ' ||
+                          c == '-' || c == '_';
+        base += safe ? c : '-';
+    }
+    while (!base.empty() && base.back() == ' ') {
+        base.pop_back();
+    }
+    if (base.empty()) {
+        base = "thearchive-" + token;
+    }
+    return base + ".zip";
 }
 
 int clampExpiryDays(const Json::Value& json) {
@@ -500,6 +558,80 @@ void registerShareRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
             }));
         },
         {drogon::Delete});
+
+    // ---- download everything as one archive --------------------------------------
+    app.registerHandler(
+        "/d/{token}/all.zip",
+        [&db, dataDir](const drogon::HttpRequestPtr& req,
+                       std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                       const std::string& token) {
+            callback(guarded([&]() -> drogon::HttpResponsePtr {
+                const ShareRow share = loadLiveShare(db, token);
+                requireSharePassword(share, req);
+
+                std::vector<zip::Entry> entries;
+                std::set<std::string> used;
+                {
+                    auto stmt = db.prepare(
+                        "SELECT sf.blob_sha256, sf.filename, sf.size, sf.client_mtime, "
+                        "       COALESCE(sf.relative_path, ''), b.crc32, b.created_at "
+                        "FROM share_files sf JOIN blobs b ON b.sha256 = sf.blob_sha256 "
+                        "WHERE sf.share_id = ? ORDER BY sf.id");
+                    stmt.bind(1, share.id);
+                    while (stmt.step()) {
+                        zip::Entry entry;
+                        const std::string hash = stmt.columnText(0);
+                        const std::string relative = stmt.columnText(4);
+                        entry.name = uniqueName(
+                            relative.empty() ? stmt.columnText(1) : relative, used);
+                        entry.source = storage::blobPath(dataDir, hash);
+                        entry.size = static_cast<std::uint64_t>(stmt.columnInt(2));
+                        entry.mtime = stmt.columnIsNull(3) ? stmt.columnInt(6)
+                                                           : stmt.columnInt(3);
+                        entry.crc32 =
+                            stmt.columnIsNull(5)
+                                ? backfillCrc32(db, entry.source, hash)
+                                : static_cast<std::uint32_t>(stmt.columnInt(5));
+                        entries.push_back(std::move(entry));
+                    }
+                }
+                if (entries.empty()) {
+                    throw HttpError{404, "this link has no files"};
+                }
+
+                // One archive counts as one download, however many files it holds.
+                auto count = db.prepare(
+                    "UPDATE shares SET download_count = download_count + 1 WHERE id = ? "
+                    "AND (max_downloads IS NULL OR download_count < max_downloads)");
+                count.bind(1, share.id).run();
+                if (db.changes() == 0) {
+                    throw HttpError{410, "this link has reached its download limit"};
+                }
+
+                auto streamer = std::make_shared<zip::Streamer>(std::move(entries));
+                const std::uint64_t total = streamer->totalSize();
+
+                auto resp = drogon::HttpResponse::newStreamResponse(
+                    [streamer](char* buffer, std::size_t length) -> std::size_t {
+                        // Drogon passes nullptr once the send has finished or been
+                        // interrupted, purely so we can release our state.
+                        return buffer == nullptr ? 0 : streamer->read(buffer, length);
+                    },
+                    "", drogon::CT_CUSTOM, "application/zip");
+
+                // Known up front because the archive is stored, not deflated. This is
+                // what turns the browser's indeterminate spinner into a real progress
+                // bar with an ETA.
+                resp->addHeader("Content-Length", std::to_string(total));
+                resp->addHeader("Content-Disposition",
+                                contentDisposition(archiveName(share.title, token)));
+                resp->addHeader("X-Content-Type-Options", "nosniff");
+                resp->addHeader("Cache-Control", "private, no-store");
+                LOG_INFO << "zip stream for share " << token << ": " << total << " bytes";
+                return resp;
+            }));
+        },
+        {drogon::Get, drogon::Head});
 
     // ---- download ---------------------------------------------------------------
     app.registerHandler(
