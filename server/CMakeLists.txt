@@ -49,6 +49,18 @@ FetchContent_MakeAvailable(drogon)
 find_package(SQLite3 REQUIRED)
 find_package(OpenSSL REQUIRED)
 
+# FindSQLite3's imported target changed name: CMake 4.x introduced SQLite3::SQLite3 and
+# deprecated SQLite::SQLite3, while older releases — including the one in Debian
+# bookworm, which the container builds on — define only the latter. Pick whichever
+# exists so the same tree builds under both.
+if(TARGET SQLite3::SQLite3)
+    set(ARCHIVE_SQLITE_TARGET SQLite3::SQLite3)
+elseif(TARGET SQLite::SQLite3)
+    set(ARCHIVE_SQLITE_TARGET SQLite::SQLite3)
+else()
+    message(FATAL_ERROR "SQLite3 found but neither imported target exists")
+endif()
+
 # argon2 ships no CMake config, so go through pkg-config and fall back to a plain
 # library search for distributions that package it without a .pc file.
 find_package(PkgConfig)
@@ -79,7 +91,7 @@ add_executable(thearchive
 target_include_directories(thearchive PRIVATE src)
 target_link_libraries(thearchive PRIVATE
     drogon
-    SQLite3::SQLite3
+    ${ARCHIVE_SQLITE_TARGET}
     OpenSSL::Crypto
     PkgConfig::ARGON2
 )
