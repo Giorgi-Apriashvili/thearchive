@@ -34,6 +34,21 @@ bool constantTimeEquals(const std::string& a, const std::string& b);
 
 std::string sha256Hex(const std::string& data);
 
+// Incremental CRC-32 (the zlib/PKZIP polynomial), which ZIP entries require.
+//
+// Computed during upload in the same pass that produces the SHA-256, because a streaming
+// ZIP must write each entry's CRC in its *local header*, before the data — so it cannot
+// be discovered while streaming without either buffering the file or falling back to
+// data descriptors.
+class Crc32 {
+public:
+    void update(const char* data, std::size_t length);
+    uint32_t value() const { return crc_; }
+
+private:
+    uint32_t crc_ = 0;
+};
+
 // Incremental SHA-256, for hashing a file without reading it into memory.
 class Sha256 {
 public:

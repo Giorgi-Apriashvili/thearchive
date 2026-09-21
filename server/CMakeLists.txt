@@ -48,6 +48,7 @@ FetchContent_MakeAvailable(drogon)
 # enough that an ORM would be more indirection than help.
 find_package(SQLite3 REQUIRED)
 find_package(OpenSSL REQUIRED)
+find_package(ZLIB REQUIRED)
 
 # FindSQLite3's imported target changed name: CMake 4.x introduced SQLite3::SQLite3 and
 # deprecated SQLite::SQLite3, while older releases — including the one in Debian
@@ -85,6 +86,7 @@ add_executable(thearchive
     src/mimetype.cc
     src/shares.cc
     src/gc.cc
+    src/zipstream.cc
     src/storage.cc
 )
 
@@ -93,6 +95,7 @@ target_link_libraries(thearchive PRIVATE
     drogon
     ${ARCHIVE_SQLITE_TARGET}
     OpenSSL::Crypto
+    ZLIB::ZLIB
     PkgConfig::ARGON2
 )
 target_compile_options(thearchive PRIVATE -Wall -Wextra -Wpedantic)

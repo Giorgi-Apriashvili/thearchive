@@ -4,6 +4,7 @@
 #include <openssl/crypto.h>
 #include <openssl/evp.h>
 #include <openssl/rand.h>
+#include <zlib.h>
 
 #include <cstring>
 #include <stdexcept>
@@ -123,6 +124,11 @@ bool constantTimeEquals(const std::string& a, const std::string& b) {
         return false;
     }
     return CRYPTO_memcmp(a.data(), b.data(), a.size()) == 0;
+}
+
+void Crc32::update(const char* data, std::size_t length) {
+    crc_ = static_cast<uint32_t>(
+        ::crc32_z(crc_, reinterpret_cast<const Bytef*>(data), length));
 }
 
 Sha256::Sha256() {
