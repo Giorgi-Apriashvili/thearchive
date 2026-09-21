@@ -1,5 +1,7 @@
 #include "auth.h"
 
+#include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cstdlib>
 #include <regex>
@@ -11,6 +13,29 @@ namespace {
 
 constexpr int kSessionDays = 30;
 constexpr std::size_t kMinPasswordLength = 6;
+
+}  // namespace
+
+std::string normaliseUsername(const std::string& raw) {
+    // Stored and compared lowercase because SQLite's default text comparison is
+    // case-sensitive: without this, `Alice` and `alice` would be two distinct accounts
+    // that the UNIQUE constraint happily allows. Files carry `uploaded_by` and the
+    // download page shows who contributed each one, so that is an impersonation vector
+    // among people who recognise each other by name.
+    //
+    // Normalising rather than rejecting also stops phone keyboards, which capitalise the
+    // first letter by default, from producing an error the user did not cause.
+    const auto notSpace = [](unsigned char c) { return std::isspace(c) == 0; };
+
+    std::string out = raw;
+    out.erase(out.begin(), std::find_if(out.begin(), out.end(), notSpace));
+    out.erase(std::find_if(out.rbegin(), out.rend(), notSpace).base(), out.end());
+    std::transform(out.begin(), out.end(), out.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return out;
+}
+
+namespace {
 
 void validateUsername(const std::string& username) {
     static const std::regex pattern{"^[a-z0-9_-]{3,32}$"};
@@ -64,8 +89,9 @@ bool Auth::hasAnyUser() const {
     return stmt.step();
 }
 
-std::string Auth::registerUser(const std::string& inviteCode, const std::string& username,
+std::string Auth::registerUser(const std::string& inviteCode, const std::string& rawUsername,
                                const std::string& password) {
+    const std::string username = normaliseUsername(rawUsername);
     validateUsername(username);
     validatePassword(password);
 
@@ -98,10 +124,11 @@ std::string Auth::registerUser(const std::string& inviteCode, const std::string&
     return startSession(userId);
 }
 
-std::string Auth::bootstrapAdmin(const std::string& username, const std::string& password) {
+std::string Auth::bootstrapAdmin(const std::string& rawUsername, const std::string& password) {
     if (hasAnyUser()) {
         throw HttpError{403, "instance is already initialised"};
     }
+    const std::string username = normaliseUsername(rawUsername);
     validateUsername(username);
     validatePassword(password);
 
@@ -113,9 +140,11 @@ std::string Auth::bootstrapAdmin(const std::string& username, const std::string&
     return startSession(db_.lastInsertId());
 }
 
-std::string Auth::login(const std::string& username, const std::string& password) {
+std::string Auth::login(const std::string& rawUsername, const std::string& password) {
+    // Lookup must normalise too: an account stored as `giorgi` has to be findable by
+    // someone who typed `Giorgi` at the login form.
     auto stmt = db_.prepare("SELECT id, password_hash FROM users WHERE username = ?");
-    stmt.bind(1, username);
+    stmt.bind(1, normaliseUsername(rawUsername));
 
     if (!stmt.step()) {
         // Hash anyway so an unknown username takes the same time as a wrong password.
@@ -220,7 +249,7 @@ void registerAuthRoutes(Auth& auth) {
                 if (!json) {
                     throw HttpError{400, "expected a JSON body"};
                 }
-                const auto username = requireString(*json, "username");
+                const auto username = normaliseUsername(requireString(*json, "username"));
                 const auto token = auth.bootstrapAdmin(username, requireString(*json, "password"));
                 return sessionResponse(token, username);
             }));
@@ -236,7 +265,7 @@ void registerAuthRoutes(Auth& auth) {
                 if (!json) {
                     throw HttpError{400, "expected a JSON body"};
                 }
-                const auto username = requireString(*json, "username");
+                const auto username = normaliseUsername(requireString(*json, "username"));
                 const auto token = auth.registerUser(requireString(*json, "invite"), username,
                                                      requireString(*json, "password"));
                 return sessionResponse(token, username);
@@ -253,7 +282,7 @@ void registerAuthRoutes(Auth& auth) {
                 if (!json) {
                     throw HttpError{400, "expected a JSON body"};
                 }
-                const auto username = requireString(*json, "username");
+                const auto username = normaliseUsername(requireString(*json, "username"));
                 const auto token = auth.login(username, requireString(*json, "password"));
                 return sessionResponse(token, username);
             }));

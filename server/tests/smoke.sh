@@ -71,6 +71,34 @@ code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/auth/register" 
     -d "{\"invite\":\"$invite\",\"username\":\"second\",\"password\":\"correct-horse-battery\"}")
 check "invite cannot be reused" "$code" "403"
 
+echo
+echo "=== usernames are case-insensitive ==="
+mixed=$(curl -s -b "$JAR" -X POST "$BASE/api/invites" | sed -n 's/.*"code":"\([^"]*\)".*/\1/p')
+CASEJAR=$(mktemp)
+code=$(curl -s -o /dev/null -w '%{http_code}' -c "$CASEJAR" -X POST "$BASE/api/auth/register" \
+    -H 'Content-Type: application/json' \
+    -d "{\"invite\":\"$mixed\",\"username\":\"  MixedCase  \",\"password\":\"correct-horse-battery\"}")
+check "mixed case accepted at registration" "$code" "200"
+check "stored lowercased and trimmed" "$(curl -s -b "$CASEJAR" "$BASE/api/me")" \
+    '{"is_admin":false,"username":"mixedcase"}'
+
+for attempt in mixedcase MIXEDCASE MixedCase; do
+    check "login as '$attempt'" \
+        "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/auth/login" \
+           -H 'Content-Type: application/json' \
+           -d "{\"username\":\"$attempt\",\"password\":\"correct-horse-battery\"}")" "200"
+done
+
+# The reason the restriction exists: two accounts differing only by case would be
+# distinct rows, and files carry uploaded_by.
+dupe=$(curl -s -b "$JAR" -X POST "$BASE/api/invites" | sed -n 's/.*"code":"\([^"]*\)".*/\1/p')
+check "cannot register a case variant of an existing name" \
+    "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/auth/register" \
+       -H 'Content-Type: application/json' \
+       -d "{\"invite\":\"$dupe\",\"username\":\"MIXEDCASE\",\"password\":\"correct-horse-battery\"}")" "409"
+rm -f "$CASEJAR"
+
+echo
 # Exactly at the minimum, so the boundary is pinned rather than merely "long enough".
 sixchar=$(curl -s -b "$JAR" -X POST "$BASE/api/invites" | sed -n 's/.*"code":"\([^"]*\)".*/\1/p')
 code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/auth/register" \

@@ -15,6 +15,10 @@ namespace archive {
 // Name of the session cookie. HttpOnly, so the frontend never reads it directly.
 inline constexpr const char* kSessionCookie = "archive_session";
 
+// Usernames are case-insensitive. Input is trimmed and lowercased before validation,
+// storage and lookup, so `Giorgi`, `giorgi` and `GIORGI` are all the same account.
+std::string normaliseUsername(const std::string& raw);
+
 struct User {
     std::int64_t id = 0;
     std::string username;

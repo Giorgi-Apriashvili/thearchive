@@ -81,10 +81,15 @@
 
       <label class="block">
         <span class="text-xs text-ink-500">Username</span>
+        <!-- Phone keyboards capitalise the first letter by default. The server lowercases
+             anyway, but leaving the field to fight the user is needless friction. -->
         <input
           bind:value={username}
           required
           autocomplete="username"
+          autocapitalize="none"
+          autocorrect="off"
+          spellcheck="false"
           class="mt-1 w-full rounded-lg border border-ink-700 bg-ink-900 px-3 py-2 text-sm outline-none focus:border-accent"
         />
       </label>
