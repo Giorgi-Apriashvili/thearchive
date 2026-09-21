@@ -1,0 +1,73 @@
+{
+  // Two IntelliSense engines fighting over the same files is what produces
+  // contradictory squiggles, so only clangd analyses C++ here.
+  "C_Cpp.intelliSenseEngine": "disabled",
+  "C_Cpp.autocomplete": "disabled",
+  "C_Cpp.errorSquiggles": "disabled",
+
+  // The build tree lives outside the repo, so CMake copies the compilation database
+  // into server/ on every build and clangd is pointed at it here.
+  "clangd.arguments": [
+    "--compile-commands-dir=${workspaceFolder}/server",
+    "--background-index",
+    "--header-insertion=never",
+    "--clang-tidy"
+  ],
+
+  "files.associations": {
+    "*.h": "cpp"
+  },
+  "[cpp]": {
+    "editor.tabSize": 4,
+    "editor.insertSpaces": true
+  },
+  // Relative rather than absolute: this file is tracked, and the same checkout is
+  // reachable as both E:\... and /mnt/e/... depending on which side opened it.
+  "cmake.sourceDirectory": "${workspaceFolder}/server",
+
+  // One build tree shared with command-line builds, in the WSL filesystem rather than
+  // under /mnt/e — compiling across the 9p bridge is drastically slower, and the
+  // extension's default of ${workspaceFolder}/build would put a second full Drogon
+  // build there.
+  "cmake.buildDirectory": "${env:HOME}/build-thearchive",
+
+  // Both must match what the shared tree was configured with. A different generator is
+  // a hard CMake error, and a different build type silently reconfigures the cache —
+  // which means recompiling Drogon from scratch every time you switch between the
+  // extension and the terminal.
+  "cmake.generator": "Ninja",
+
+  // Drogon's vendored trantor declares cmake_minimum_required(VERSION 3.5), which CMake
+  // 4 warns about. CMake Tools reports that warning at Error severity in the Problems
+  // panel, where it drowns out real diagnostics. It concerns a pinned third-party
+  // dependency we do not control, and goes away when Drogon raises its own minimum.
+  "cmake.configureArgs": [
+    "-Wno-deprecated"
+  ],
+
+  // So running from the extension produces a usable dev server rather than one writing
+  // into whatever the cwd happens to be. Secure cookies are off because browsers
+  // discard them on http:// origins, which makes login silently fail to persist.
+  "cmake.debugConfig": {
+    "environment": [
+      { "name": "ARCHIVE_DATA_DIR", "value": "${env:HOME}/thearchive-dev-data" },
+      { "name": "ARCHIVE_SECURE_COOKIES", "value": "0" }
+    ]
+  },
+
+  "cmake.defaultVariants": {
+    "buildType": {
+      "default": "release",
+      "choices": {
+        "release": {
+          "short": "Release",
+          "buildType": "Release"
+        },
+        "debug": {
+          "short": "Debug",
+          "buildType": "Debug"
+        }
+      }
+    }
+  }
+}
