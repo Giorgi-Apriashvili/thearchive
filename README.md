@@ -95,7 +95,30 @@ remote extension and use clangd, which reads the generated `compile_commands.jso
 
 ## Deployment
 
+A single host with Docker. Caddy terminates TLS and reverse-proxies everything to the
+app; the app serves both the API and the built frontend.
+
+First time:
+
 ```bash
-ssh <server>
-cd /srv/thearchive && git pull && docker compose up -d --build
+git clone <repo> /srv/thearchive && cd /srv/thearchive/deploy
+cp .env.example .env && $EDITOR .env      # domain, data dir, uid/gid
+docker compose up -d --build
 ```
+
+The domain must already resolve to the host — Caddy obtains a certificate on first
+request, and ACME needs port 80 reachable.
+
+Afterwards, every update is:
+
+```bash
+cd /srv/thearchive && git pull && docker compose -f deploy/docker-compose.yml up -d --build
+```
+
+Schema migrations run automatically at startup, so there is no separate migration step.
+Only `deploy/.env` is host-specific; nothing else in the repo needs editing per
+deployment.
+
+The app container publishes no ports of its own. A published container port is DNAT'd in
+prerouting and never traverses the host firewall's input hook, so exposing it directly
+would bypass the firewall — only Caddy is reachable.

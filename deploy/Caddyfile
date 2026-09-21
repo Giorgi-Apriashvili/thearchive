@@ -1,0 +1,26 @@
+{$ARCHIVE_DOMAIN} {
+	# Skip compression on the download path. Its payloads are photos, video and
+	# archives, which are already compressed — spending CPU there buys nothing and
+	# interferes with range requests.
+	@compressible not path /d/*
+	encode @compressible zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+	}
+
+	reverse_proxy app:8080 {
+		# Stream rather than buffer. Uploads arrive as multi-megabyte tus chunks and
+		# downloads can be gigabytes; buffering either would put them through memory
+		# and break the progress reporting the client relies on.
+		flush_interval -1
+	}
+}
+
+# Optional. A separate site block gets its own certificate, so if www does not resolve
+# yet this fails on its own without taking the apex down with it.
+www.{$ARCHIVE_DOMAIN} {
+	redir https://{$ARCHIVE_DOMAIN}{uri} permanent
+}
