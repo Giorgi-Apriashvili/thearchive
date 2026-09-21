@@ -1,0 +1,11 @@
+.git
+**/node_modules
+**/dist
+build/
+cmake-build-*/
+**/compile_commands.json
+**/.cache
+.vscode
+docs
+*.md
+deploy/.env

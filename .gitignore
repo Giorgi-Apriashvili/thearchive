@@ -31,3 +31,6 @@ compile_commands.json
 *.swp
 .DS_Store
 Thumbs.db
+
+# Deployment secrets — host-specific, never committed
+deploy/.env

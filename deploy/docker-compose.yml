@@ -1,0 +1,48 @@
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: thearchive:latest
+    restart: unless-stopped
+
+    # Runs as the host user that owns the data directory. Without this the container
+    # writes as root and every blob on the host ends up root-owned.
+    user: "${PUID}:${PGID}"
+
+    environment:
+      ARCHIVE_PUBLIC_URL: ${ARCHIVE_PUBLIC_URL}
+      ARCHIVE_MAX_UPLOAD_BYTES: ${ARCHIVE_MAX_UPLOAD_BYTES:-21474836480}
+      ARCHIVE_GC_INTERVAL_SECONDS: ${ARCHIVE_GC_INTERVAL_SECONDS:-900}
+      ARCHIVE_BLOB_GRACE_SECONDS: ${ARCHIVE_BLOB_GRACE_SECONDS:-86400}
+
+    volumes:
+      - ${ARCHIVE_DATA_DIR}:/data
+
+    # Deliberately publishes no ports. A published container port is DNAT'd in
+    # prerouting and never traverses the host firewall's input hook, so exposing the
+    # app directly would quietly bypass the firewall. Only Caddy is reachable.
+    networks: [edge]
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"   # HTTP/3
+    environment:
+      ARCHIVE_DOMAIN: ${ARCHIVE_DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data      # certificates and ACME account keys — losing this means re-issuing
+      - caddy_config:/config
+    depends_on: [app]
+    networks: [edge]
+
+networks:
+  edge:
+
+volumes:
+  caddy_data:
+  caddy_config:
