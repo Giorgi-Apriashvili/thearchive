@@ -23,6 +23,13 @@ inline std::filesystem::path blobPath(const std::filesystem::path& dataDir,
     return dataDir / "blobs" / hash.substr(0, 2) / hash.substr(2, 2) / hash;
 }
 
+// Unlinks a blob's file and every derivative of it, pruning the fan-out directories
+// once empty. The single place that knows what a blob owns on disk: the expiry sweep
+// and explicit deletion both route through here, so derived data cannot be reaped by
+// one path and leaked by the other.
+void removeBlobFiles(Database& db, const std::filesystem::path& dataDir,
+                     const std::string& hash);
+
 // Deletes a blob's row and file when nothing references it any more. Returns whether it
 // went.
 //

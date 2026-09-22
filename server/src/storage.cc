@@ -7,6 +7,7 @@
 #include "auth.h"
 #include "db.h"
 #include "httputil.h"
+#include "thumbnail.h"
 
 namespace archive::storage {
 namespace {
@@ -19,6 +20,16 @@ std::int64_t scalar(Database& db, const std::string& sql) {
 }
 
 }  // namespace
+
+void removeBlobFiles(Database& db, const fs::path& dataDir, const std::string& hash) {
+    (void)db;
+    std::error_code ec;
+    const fs::path path = blobPath(dataDir, hash);
+    fs::remove(path, ec);
+    fs::remove(path.parent_path(), ec);
+    fs::remove(path.parent_path().parent_path(), ec);
+    thumbnail::remove(dataDir, hash);
+}
 
 bool deleteIfOrphaned(Database& db, const fs::path& dataDir, const std::string& hash) {
     if (hash.empty()) {
@@ -35,13 +46,9 @@ bool deleteIfOrphaned(Database& db, const fs::path& dataDir, const std::string& 
         return false;
     }
 
-    // Row first, then the file — the same ordering the sweep uses, so a crash in between
-    // leaks a file rather than leaving a row pointing at nothing.
-    std::error_code ec;
-    const fs::path path = blobPath(dataDir, hash);
-    fs::remove(path, ec);
-    fs::remove(path.parent_path(), ec);
-    fs::remove(path.parent_path().parent_path(), ec);
+    // Row first, then the files — the same ordering the sweep uses, so a crash in
+    // between leaks a file rather than leaving a row pointing at nothing.
+    removeBlobFiles(db, dataDir, hash);
     return true;
 }
 

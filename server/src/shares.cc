@@ -1,6 +1,7 @@
 #include "shares.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
@@ -14,6 +15,7 @@
 #include "httputil.h"
 #include "mimetype.h"
 #include "storage.h"
+#include "thumbnail.h"
 #include "zipstream.h"
 
 namespace archive {
@@ -78,12 +80,44 @@ void requireSharePassword(const ShareRow& share, const drogon::HttpRequestPtr& r
     }
 }
 
+// Containers a browser will play from a <video> element. Deliberately narrow: this
+// decides what may be served without an attachment disposition.
+bool isInlinePlayableVideo(const std::string& contentType) {
+    return contentType == "video/mp4" || contentType == "video/webm" ||
+           contentType == "video/quicktime";
+}
+
+// What /inline may serve. An allowlist rather than mime::isRiskyToRender's denylist,
+// because this is the only endpoint that omits `attachment`: anything not named here is
+// refused outright, so a type we failed to anticipate cannot execute in our origin.
+bool isInlineSafe(const std::string& contentType) {
+    static constexpr std::array<std::string_view, 6> kImages{
+        "image/jpeg", "image/png", "image/gif", "image/webp", "image/avif", "image/bmp",
+    };
+    for (const std::string_view type : kImages) {
+        if (contentType == type) {
+            return true;
+        }
+    }
+    return isInlinePlayableVideo(contentType);
+}
+
+// A file within a live share, resolved and password-checked. Shared by both preview
+// endpoints, which differ only in what they then serve.
+struct PreviewTarget {
+    std::string hash;
+    std::string filename;
+    std::string contentType;
+    int thumbState = 0;
+};
+
 Json::Value filesOf(Database& db, std::int64_t shareId) {
     Json::Value files{Json::arrayValue};
     auto stmt = db.prepare(
         "SELECT sf.id, sf.filename, sf.size, "
         "       COALESCE(b.content_type, sf.content_type, 'application/octet-stream'), "
-        "       COALESCE(sf.relative_path, ''), sf.client_mtime, COALESCE(u.username, '') "
+        "       COALESCE(sf.relative_path, ''), sf.client_mtime, COALESCE(u.username, ''), "
+        "       b.thumb "
         "FROM share_files sf "
         "JOIN blobs b ON b.sha256 = sf.blob_sha256 "
         "LEFT JOIN users u ON u.id = sf.uploaded_by "
@@ -103,6 +137,14 @@ Json::Value filesOf(Database& db, std::int64_t shareId) {
         }
         if (const std::string who = stmt.columnText(6); !who.empty()) {
             file["uploaded_by"] = who;
+        }
+        // A single field rather than making the client parse MIME types: "image" when a
+        // preview has actually been rendered, "video" when the browser can play the
+        // original inline, absent when there is nothing to show.
+        if (stmt.columnInt(7) == 1) {
+            file["preview"] = "image";
+        } else if (isInlinePlayableVideo(stmt.columnText(3))) {
+            file["preview"] = "video";
         }
         files.append(file);
     }
@@ -558,6 +600,122 @@ void registerShareRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
             }));
         },
         {drogon::Delete});
+
+    // ---- previews ----------------------------------------------------------------
+    //
+    // Neither of these touches download_count. Browsing a gallery of forty photos would
+    // otherwise exhaust a share's max_downloads before the recipient had downloaded
+    // anything — the same reasoning that already exempts ranged requests.
+    const auto resolvePreview = [&db](const std::string& token, const std::string& fileId,
+                                      const drogon::HttpRequestPtr& req) {
+        const ShareRow share = loadLiveShare(db, token);
+        requireSharePassword(share, req);
+
+        std::int64_t wanted = 0;
+        try {
+            wanted = std::stoll(fileId);
+        } catch (const std::exception&) {
+            throw HttpError{404, "no such file in this share"};
+        }
+
+        auto stmt = db.prepare(
+            "SELECT sf.blob_sha256, sf.filename, "
+            "       COALESCE(b.content_type, 'application/octet-stream'), b.thumb "
+            "FROM share_files sf JOIN blobs b ON b.sha256 = sf.blob_sha256 "
+            "WHERE sf.id = ? AND sf.share_id = ?");
+        stmt.bind(1, wanted).bind(2, share.id);
+        if (!stmt.step()) {
+            throw HttpError{404, "no such file in this share"};
+        }
+        return PreviewTarget{stmt.columnText(0), stmt.columnText(1), stmt.columnText(2),
+                             static_cast<int>(stmt.columnInt(3))};
+    };
+
+    app.registerHandler(
+        "/d/{token}/{fileId}/thumb",
+        [&db, dataDir, resolvePreview](
+            const drogon::HttpRequestPtr& req,
+            std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+            const std::string& token, const std::string& fileId) {
+            callback(guarded([&]() -> drogon::HttpResponsePtr {
+                PreviewTarget target = resolvePreview(token, fileId, req);
+
+                // Blobs stored before previews existed have thumb = 0. Render on first
+                // request, as the crc32 column is backfilled, so old shares gain
+                // previews without a migration pass over the whole store.
+                if (target.thumbState == 0 && thumbnail::isThumbnailable(target.contentType)) {
+                    const bool rendered = thumbnail::generate(
+                        storage::blobPath(dataDir, target.hash), dataDir, target.hash);
+                    auto mark = db.prepare("UPDATE blobs SET thumb = ? WHERE sha256 = ?");
+                    mark.bind(1, static_cast<std::int64_t>(rendered ? 1 : 2))
+                        .bind(2, target.hash)
+                        .run();
+                    target.thumbState = rendered ? 1 : 2;
+                }
+                if (target.thumbState != 1) {
+                    throw HttpError{404, "no preview for this file"};
+                }
+
+                const bool large = req->getParameter("s") != "sm";
+                const fs::path path = thumbnail::path(dataDir, target.hash, large);
+                if (!fs::exists(path)) {
+                    throw HttpError{404, "no preview for this file"};
+                }
+
+                auto resp = drogon::HttpResponse::newFileResponse(
+                    path.string(), "", drogon::CT_CUSTOM, "image/webp", req);
+                resp->addHeader("Content-Disposition", "inline");
+                resp->addHeader("X-Content-Type-Options", "nosniff");
+                // Content-addressed and immutable, but reachable only via the share
+                // token, so private rather than public.
+                resp->addHeader("Cache-Control", "private, max-age=3600");
+                return resp;
+            }));
+        },
+        {drogon::Get, drogon::Head});
+
+    app.registerHandler(
+        "/d/{token}/{fileId}/inline",
+        [dataDir, resolvePreview](
+            const drogon::HttpRequestPtr& req,
+            std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+            const std::string& token, const std::string& fileId) {
+            callback(guarded([&]() -> drogon::HttpResponsePtr {
+                const PreviewTarget target = resolvePreview(token, fileId, req);
+                if (!isInlineSafe(target.contentType)) {
+                    throw HttpError{415, "this file cannot be previewed inline"};
+                }
+
+                const fs::path path = storage::blobPath(dataDir, target.hash);
+                std::error_code ec;
+                const std::size_t fileSize = fs::file_size(path, ec);
+                if (ec) {
+                    throw HttpError{404, "file is no longer available"};
+                }
+
+                // Range support matters here specifically: it is what lets a <video>
+                // element seek without refetching from the start.
+                const RangeRequest range = parseRange(req->getHeader("Range"), fileSize);
+                if (range.result == RangeResult::Unsatisfiable) {
+                    auto resp = drogon::HttpResponse::newHttpResponse();
+                    resp->setStatusCode(drogon::k416RequestedRangeNotSatisfiable);
+                    resp->addHeader("Content-Range", "bytes */" + std::to_string(fileSize));
+                    return resp;
+                }
+
+                const bool ranged = (range.result == RangeResult::Ok);
+                auto resp = drogon::HttpResponse::newFileResponse(
+                    path.string(), ranged ? range.offset : 0, ranged ? range.length : 0,
+                    /*setContentRange=*/ranged, "", drogon::CT_CUSTOM, target.contentType,
+                    req);
+                resp->addHeader("Content-Disposition", "inline");
+                resp->addHeader("X-Content-Type-Options", "nosniff");
+                resp->addHeader("Accept-Ranges", "bytes");
+                resp->addHeader("Cache-Control", "private, max-age=3600");
+                return resp;
+            }));
+        },
+        {drogon::Get, drogon::Head});
 
     // ---- download everything as one archive --------------------------------------
     app.registerHandler(

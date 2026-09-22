@@ -1,6 +1,7 @@
 <script lang="ts">
   import { api, ApiError, type ShareDetail } from '../lib/api'
   import { bytes, shortDate, until } from '../lib/format'
+  import Lightbox from '../lib/Lightbox.svelte'
 
   let { token }: { token: string } = $props()
 
@@ -46,6 +47,21 @@
   )
 
   const totalBytes = $derived(share?.files.reduce((sum, f) => sum + f.size, 0) ?? 0)
+
+  // Only previewable files take part in the viewer, so arrowing through it never lands
+  // on a PDF with nothing to show.
+  const viewable = $derived(share?.files.filter((f) => f.preview) ?? [])
+  let viewerIndex = $state(-1)
+
+  const suffix = $derived(unlocked ? `?p=${encodeURIComponent(unlocked)}` : '')
+  const thumbUrl = (id: number, size: 'sm' | 'lg') =>
+    `/d/${token}/${id}/thumb${size === 'sm' ? (suffix ? suffix + '&s=sm' : '?s=sm') : suffix}`
+  const inlineUrl = (id: number) => `/d/${token}/${id}/inline${suffix}`
+
+  function openViewer(fileId: number) {
+    const at = viewable.findIndex((f) => f.id === fileId)
+    if (at >= 0) viewerIndex = at
+  }
 
   const remaining = $derived(
     share?.max_downloads ? share.max_downloads - share.download_count : null,
@@ -107,8 +123,34 @@
 
     <ul class="mt-4 divide-y divide-ink-800 rounded-xl border border-ink-800">
       {#each share.files as file (file.id)}
-        <li class="flex items-center justify-between gap-4 px-4 py-3">
-          <div class="min-w-0">
+        <li class="flex items-center justify-between gap-3 px-4 py-3">
+          {#if file.preview}
+            <!-- The thumbnail is the preview button: it is the affordance people
+                 actually reach for, and a 320px WebP is ~25 KB against an 8 MB original. -->
+            <button
+              onclick={() => openViewer(file.id)}
+              aria-label={`Preview ${file.filename}`}
+              class="relative size-11 shrink-0 overflow-hidden rounded-lg border border-ink-700 bg-ink-900 transition hover:border-accent"
+            >
+              {#if file.preview === 'image'}
+                <img
+                  src={thumbUrl(file.id, 'sm')}
+                  alt=""
+                  loading="lazy"
+                  class="size-full object-cover"
+                />
+              {:else}
+                <span class="flex size-full items-center justify-center text-ink-300">▶</span>
+              {/if}
+            </button>
+          {:else}
+            <span
+              class="flex size-11 shrink-0 items-center justify-center rounded-lg border border-ink-800 text-xs text-ink-700"
+              aria-hidden="true">—</span
+            >
+          {/if}
+
+          <div class="min-w-0 flex-1">
             <p class="truncate text-sm">{file.filename}</p>
             <p class="tnum mt-0.5 text-xs text-ink-500">
               {bytes(file.size)}
@@ -116,6 +158,7 @@
               {#if file.client_mtime}· {shortDate(file.client_mtime)}{/if}
             </p>
           </div>
+
           <a
             href={downloadUrl(file.id)}
             download={file.filename}
@@ -133,3 +176,14 @@
     </p>
   {/if}
 </div>
+
+{#if viewerIndex >= 0}
+  <Lightbox
+    files={viewable}
+    bind:index={viewerIndex}
+    {thumbUrl}
+    {inlineUrl}
+    {downloadUrl}
+    onClose={() => (viewerIndex = -1)}
+  />
+{/if}

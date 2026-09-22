@@ -17,7 +17,7 @@ FROM debian:bookworm AS build
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential cmake ninja-build pkg-config git ca-certificates \
         libjsoncpp-dev uuid-dev zlib1g-dev libssl-dev libsqlite3-dev \
-        libargon2-dev libbrotli-dev \
+        libargon2-dev libbrotli-dev libvips-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
@@ -31,7 +31,7 @@ RUN cmake -S server -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
         libjsoncpp25 libuuid1 zlib1g libssl3 libsqlite3-0 libargon2-1 libbrotli1 \
-        ca-certificates curl \
+        libvips42 ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /src/build/thearchive /usr/local/bin/thearchive

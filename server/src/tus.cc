@@ -16,6 +16,7 @@
 #include "crypto.h"
 #include "mimetype.h"
 #include "storage.h"
+#include "thumbnail.h"
 
 namespace archive {
 namespace {
@@ -265,6 +266,28 @@ std::string promoteToBlob(Database& db, const fs::path& dataDir, const std::stri
         .bind(6, now)
         .bind(7, static_cast<std::int64_t>(crc.value()))
         .run();
+
+    // Render previews now, while the bytes are hot in page cache. This is the one
+    // blocking call added to the upload path — roughly 50-150 ms for a 12 MP photo — and
+    // a failure is recorded rather than propagated: an image libvips cannot read is not
+    // a reason to reject an upload that otherwise succeeded.
+    //
+    // Skipped entirely on a dedupe hit that already has previews: four people uploading
+    // the same photo from the same night should pay the rendering cost once.
+    bool alreadyRendered = false;
+    {
+        auto state = db.prepare("SELECT thumb FROM blobs WHERE sha256 = ?");
+        state.bind(1, hash);
+        alreadyRendered = state.step() && state.columnInt(0) != 0;
+    }
+    if (!alreadyRendered && thumbnail::isThumbnailable(detectedType)) {
+        const bool rendered = thumbnail::generate(target, dataDir, hash);
+        auto mark = db.prepare("UPDATE blobs SET thumb = ? WHERE sha256 = ?");
+        mark.bind(1, static_cast<std::int64_t>(rendered ? 1 : 2)).bind(2, hash).run();
+        if (!rendered) {
+            LOG_WARN << "thumbnail failed for " << hash << " (" << detectedType << ")";
+        }
+    }
 
     auto complete = db.prepare(
         "UPDATE uploads SET blob_sha256 = ?, completed_at = ? WHERE id = ?");

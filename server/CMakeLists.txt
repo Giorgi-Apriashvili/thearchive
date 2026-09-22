@@ -68,6 +68,13 @@ find_package(PkgConfig)
 if(PkgConfig_FOUND)
     pkg_check_modules(ARGON2 IMPORTED_TARGET libargon2)
 endif()
+# libvips does the thumbnailing. It shrinks on load rather than decoding the full
+# image, and brings HEIC/AVIF decode with it — which is the only way an iPhone upload
+# becomes viewable, since browsers cannot render HEIC natively.
+if(PkgConfig_FOUND)
+    pkg_check_modules(VIPS REQUIRED IMPORTED_TARGET vips)
+endif()
+
 if(NOT TARGET PkgConfig::ARGON2)
     find_library(ARGON2_LIBRARY NAMES argon2 REQUIRED)
     find_path(ARGON2_INCLUDE_DIR NAMES argon2.h REQUIRED)
@@ -87,6 +94,7 @@ add_executable(thearchive
     src/shares.cc
     src/gc.cc
     src/zipstream.cc
+    src/thumbnail.cc
     src/storage.cc
 )
 
@@ -97,6 +105,7 @@ target_link_libraries(thearchive PRIVATE
     OpenSSL::Crypto
     ZLIB::ZLIB
     PkgConfig::ARGON2
+    PkgConfig::VIPS
 )
 target_compile_options(thearchive PRIVATE -Wall -Wextra -Wpedantic)
 

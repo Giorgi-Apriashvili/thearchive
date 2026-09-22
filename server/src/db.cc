@@ -155,13 +155,21 @@ constexpr const char* kSchemaV6 = R"SQL(
 ALTER TABLE blobs ADD COLUMN crc32 INTEGER;
 )SQL";
 
-constexpr std::array<Migration, 6> kMigrations{{
+// Whether a preview has been rendered for this blob. Recorded rather than inferred
+// from the filesystem so the share listing does not stat two files per row, and so
+// "not an image" stays distinguishable from "an image we failed to render".
+constexpr const char* kSchemaV7 = R"SQL(
+ALTER TABLE blobs ADD COLUMN thumb INTEGER NOT NULL DEFAULT 0;  -- 0 none, 1 ready, 2 failed
+)SQL";
+
+constexpr std::array<Migration, 7> kMigrations{{
     {1, kSchemaV1},
     {2, kSchemaV2},
     {3, kSchemaV3},
     {4, kSchemaV4},
     {5, kSchemaV5},
     {6, kSchemaV6},
+    {7, kSchemaV7},
 }};
 
 }  // namespace
