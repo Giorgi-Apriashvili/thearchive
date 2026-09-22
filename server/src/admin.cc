@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "httputil.h"
+#include "shares.h"
 #include "storage.h"
 
 namespace archive {
@@ -130,7 +131,7 @@ void registerAdminRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
                 auto list = db.prepare(
                     "SELECT s.token, COALESCE(s.title, ''), s.created_at, s.expires_at, "
                     "       s.download_count, s.deleted_at, s.password_hash IS NOT NULL, "
-                    "       COUNT(sf.id), COALESCE(SUM(sf.size), 0) "
+                    "       COUNT(sf.id), COALESCE(SUM(sf.size), 0), s.visibility "
                     "FROM shares s LEFT JOIN share_files sf ON sf.share_id = s.id "
                     "WHERE s.owner_id = ? GROUP BY s.id ORDER BY s.created_at DESC");
                 list.bind(1, userId);
@@ -145,6 +146,11 @@ void registerAdminRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
                     share["password_protected"] = list.columnInt(6) != 0;
                     share["file_count"] = static_cast<Json::Int64>(list.columnInt(7));
                     share["total_bytes"] = static_cast<Json::Int64>(list.columnInt(8));
+                    share["visibility"] = list.columnText(9);
+                    // Built here rather than in the client: behind a proxy the browser
+                    // cannot reliably know the public origin, which is why
+                    // ARCHIVE_PUBLIC_URL exists.
+                    share["url"] = publicBaseUrl() + "/d/" + list.columnText(0);
                     shares.append(share);
                 }
                 out["shares"] = shares;
@@ -331,7 +337,7 @@ void registerAdminRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
                     "SELECT s.token, COALESCE(s.title, ''), COALESCE(u.username, ''), "
                     "       s.created_at, s.expires_at, s.download_count, "
                     "       s.password_hash IS NOT NULL, COUNT(sf.id), "
-                    "       COALESCE(SUM(sf.size), 0) "
+                    "       COALESCE(SUM(sf.size), 0), s.visibility "
                     "FROM shares s LEFT JOIN users u ON u.id = s.owner_id "
                     "LEFT JOIN share_files sf ON sf.share_id = s.id "
                     "WHERE s.deleted_at IS NULL AND s.released_at IS NULL "
@@ -348,6 +354,8 @@ void registerAdminRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
                     share["password_protected"] = stmt.columnInt(6) != 0;
                     share["file_count"] = static_cast<Json::Int64>(stmt.columnInt(7));
                     share["total_bytes"] = static_cast<Json::Int64>(stmt.columnInt(8));
+                    share["visibility"] = stmt.columnText(9);
+                    share["url"] = publicBaseUrl() + "/d/" + stmt.columnText(0);
                     out.append(share);
                 }
                 return drogon::HttpResponse::newHttpJsonResponse(out);
@@ -360,8 +368,28 @@ void registerAdminRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
         [&db, &auth](const drogon::HttpRequestPtr& req,
                      std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                      const std::string& token) {
-            callback(guarded([&] {
+            callback(guarded([&]() -> drogon::HttpResponsePtr {
                 requireAdmin(req, auth);
+
+                if (req->method() == drogon::Patch) {
+                    std::shared_ptr<Json::Value> holder;
+                    const std::string wanted =
+                        requireString(requireJson(req, holder), "visibility");
+                    if (wanted != "private" && wanted != "public") {
+                        throw HttpError{400, "visibility must be private or public"};
+                    }
+                    auto set = db.prepare(
+                        "UPDATE shares SET visibility = ? WHERE token = ? "
+                        "AND deleted_at IS NULL");
+                    set.bind(1, wanted).bind(2, token).run();
+                    if (db.changes() == 0) {
+                        throw HttpError{404, "no such share"};
+                    }
+                    Json::Value out;
+                    out["visibility"] = wanted;
+                    return drogon::HttpResponse::newHttpJsonResponse(out);
+                }
+
                 auto stmt = db.prepare(
                     "UPDATE shares SET deleted_at = ? WHERE token = ? AND deleted_at IS NULL");
                 stmt.bind(1, nowSeconds()).bind(2, token).run();
@@ -373,7 +401,7 @@ void registerAdminRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
                 return drogon::HttpResponse::newHttpJsonResponse(out);
             }));
         },
-        {drogon::Delete});
+        {drogon::Delete, drogon::Patch});
 
     // ---- overview ----------------------------------------------------------------
     app.registerHandler(

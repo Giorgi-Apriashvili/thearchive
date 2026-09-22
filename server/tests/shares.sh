@@ -237,6 +237,61 @@ check "opting out gives a public link" \
     "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/shares/$TOKW")" "200"
 
 echo
+echo "=== flipping visibility after creation ==="
+patch_vis() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
+
+check "owner opens a private share up" \
+    "$(patch_vis -b "$JAR" -X PATCH "$BASE/api/shares/$TOKV" \
+       -H 'Content-Type: application/json' -d '{"visibility":"public"}')" "200"
+check "anonymous can now read it" \
+    "$(patch_vis "$BASE/api/shares/$TOKV")" "200"
+check "and download from it" "$(patch_vis "$BASE/d/$TOKV/$VFID")" "200"
+
+check "owner closes it again" \
+    "$(patch_vis -b "$JAR" -X PATCH "$BASE/api/shares/$TOKV" \
+       -H 'Content-Type: application/json' -d '{"visibility":"private"}')" "200"
+check "anonymous is locked out again" "$(patch_vis "$BASE/api/shares/$TOKV")" "401"
+check "with the reason intact" \
+    "$(curl -s "$BASE/api/shares/$TOKV" | jget reason)" "members_only"
+
+check "a bogus value is rejected" \
+    "$(patch_vis -b "$JAR" -X PATCH "$BASE/api/shares/$TOKV" \
+       -H 'Content-Type: application/json' -d '{"visibility":"sort-of-public"}')" "400"
+check "and changed nothing" \
+    "$(sql "SELECT visibility FROM shares WHERE token='$TOKV';")" "private"
+check "anonymous cannot flip anything" \
+    "$(patch_vis -X PATCH "$BASE/api/shares/$TOKV" \
+       -H 'Content-Type: application/json' -d '{"visibility":"public"}')" "401"
+
+# The quiet failure mode: one member widening another member's share.
+INVC=$(curl -s -b "$JAR" -X POST "$BASE/api/invites" | jget code)
+OTHER=$(mktemp)
+curl -s -o /dev/null -c "$OTHER" -X POST "$BASE/api/auth/register" \
+    -H 'Content-Type: application/json' \
+    -d "{\"invite\":\"$INVC\",\"username\":\"bystander\",\"password\":\"correct-horse-battery\"}"
+check "another member cannot flip someone else's share" \
+    "$(patch_vis -b "$OTHER" -X PATCH "$BASE/api/shares/$TOKV" \
+       -H 'Content-Type: application/json' -d '{"visibility":"public"}')" "404"
+check "it really is untouched" \
+    "$(sql "SELECT visibility FROM shares WHERE token='$TOKV';")" "private"
+
+check "an admin can flip a share they do not own" \
+    "$(patch_vis -b "$JAR" -X PATCH "$BASE/api/admin/shares/$TOKW" \
+       -H 'Content-Type: application/json' -d '{"visibility":"private"}')" "200"
+check "which takes effect" "$(patch_vis "$BASE/api/shares/$TOKW")" "401"
+curl -s -o /dev/null -b "$JAR" -X PATCH "$BASE/api/admin/shares/$TOKW" \
+    -H 'Content-Type: application/json' -d '{"visibility":"public"}'
+
+# The admin surfaces need both fields for Copy and the toggle to work at all.
+adminshare=$(curl -s -b "$JAR" "$BASE/api/admin/shares")
+printf '%s' "$adminshare" | grep -q '"visibility"' && ok "admin listing exposes visibility" \
+    || bad "admin listing exposes visibility" "absent"
+printf '%s' "$adminshare" | grep -q '"url":"https://archive.example.com/d/' \
+    && ok "admin listing builds a shareable url" \
+    || bad "admin listing builds a shareable url" "absent"
+rm -f "$OTHER"
+
+echo
 echo "=== image previews ==="
 # A real JPEG via the vips CLI, which ships with the library the server links anyway.
 vips black "$WORK/shot.jpg" 1200 900 2>/dev/null

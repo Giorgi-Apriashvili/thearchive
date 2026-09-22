@@ -544,6 +544,35 @@ void registerShareRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
                     return drogon::HttpResponse::newHttpJsonResponse(out);
                 }
 
+                if (req->method() == drogon::Patch) {
+                    const User user = requireUser(req, auth);
+
+                    std::shared_ptr<Json::Value> holder;
+                    const std::string wanted =
+                        requireString(requireJson(req, holder), "visibility");
+                    // Validated rather than stored as given: authoriseShare treats
+                    // anything that is not exactly "public" as private, so a typo would
+                    // fail closed — safely, but silently, and the owner would believe
+                    // they had published something they had not.
+                    if (wanted != "private" && wanted != "public") {
+                        throw HttpError{400, "visibility must be private or public"};
+                    }
+
+                    // Owner-scoped, as with the delete above: the WHERE clause is the
+                    // authorisation, and one 404 covers both "no such share" and "not
+                    // yours" rather than confirming someone else's token exists.
+                    auto stmt = db.prepare(
+                        "UPDATE shares SET visibility = ? WHERE token = ? "
+                        "AND owner_id = ? AND deleted_at IS NULL");
+                    stmt.bind(1, wanted).bind(2, token).bind(3, user.id).run();
+                    if (db.changes() == 0) {
+                        throw HttpError{404, "no such share"};
+                    }
+                    Json::Value out;
+                    out["visibility"] = wanted;
+                    return drogon::HttpResponse::newHttpJsonResponse(out);
+                }
+
                 const ShareRow share = authoriseShare(db, auth, token, req);
                 const auto viewer = auth.userForSession(req->getCookie(kSessionCookie));
                 const bool isOwner = viewer && viewer->id == share.ownerId;
@@ -566,7 +595,7 @@ void registerShareRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
                 return resp;
             }));
         },
-        {drogon::Get, drogon::Delete});
+        {drogon::Get, drogon::Delete, drogon::Patch});
 
     // ---- remove one file from a share -------------------------------------------
     app.registerHandler(

@@ -43,6 +43,7 @@ async function request<T>(method: string, path: string, body?: unknown, headers:
 export const api = {
   get: <T>(path: string, headers?: Record<string, string>) => request<T>('GET', path, undefined, headers),
   post: <T>(path: string, body?: unknown, headers?: Record<string, string>) => request<T>('POST', path, body, headers),
+  patch: <T>(path: string, body?: unknown) => request<T>('PATCH', path, body),
   del: <T>(path: string) => request<T>('DELETE', path),
 }
 

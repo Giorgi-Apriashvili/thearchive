@@ -13,6 +13,7 @@
   import { bytes, shortDate, until } from '../lib/format'
   import { link } from '../lib/router.svelte'
   import Confirm from '../lib/Confirm.svelte'
+  import VisibilityToggle from '../lib/VisibilityToggle.svelte'
 
   let { me, onSignOut }: { me: Me; onSignOut: () => void } = $props()
 
@@ -476,13 +477,17 @@
                   1
                     ? ''
                     : 's'}
-                  {#if share.visibility === 'public'}· public{:else}· members only{/if}
-                {#if share.password_protected}· password{/if}
+                  {#if share.password_protected}· password{/if}
                 </p>
               </div>
               <div class="flex shrink-0 items-center gap-3 text-xs">
                 <a href={`/d/${share.token}`} class="text-ink-500 hover:text-ink-300">Open</a>
                 <button class="text-ink-500 hover:text-ink-300" onclick={() => copy(share.url)}>Copy</button>
+                <VisibilityToggle
+                  visibility={share.visibility}
+                  endpoint={`/api/shares/${share.token}`}
+                  onChanged={(next) => (share.visibility = next)}
+                />
                 <button class="text-ink-500 hover:text-red-400" onclick={() => revoke(share.token)}>
                   Revoke
                 </button>
