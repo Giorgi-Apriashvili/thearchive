@@ -54,7 +54,11 @@
 
 <div class="flex min-h-screen items-center justify-center px-4">
   <div class="w-full max-w-sm">
-    <h1 class="wordmark text-4xl">Weekend<em>Archive</em></h1>
+    <h1>
+      <a href="/" class="wordmark text-4xl transition hover:opacity-80" title="Reload">
+        Weekend<em>Archive</em>
+      </a>
+    </h1>
     <p class="mt-1 text-sm text-ink-500">Drop files, share a link, forget about it.</p>
 
     <form class="mt-8 space-y-4" onsubmit={submit}>
