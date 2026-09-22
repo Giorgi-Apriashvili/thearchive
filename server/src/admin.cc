@@ -265,6 +265,29 @@ void registerAdminRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
         {drogon::Post});
 
     app.registerHandler(
+        "/api/admin/users/{id}/username",
+        [&auth](const drogon::HttpRequestPtr& req,
+                std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                const std::string& id) {
+            callback(guarded([&] {
+                const User actor = requireAdmin(req, auth);
+                std::shared_ptr<Json::Value> holder;
+                const std::int64_t userId = parseId(id);
+                const std::string was = requireString(requireJson(req, holder), "username");
+                // No guard on renaming yourself, or an admin, or the last admin: a name
+                // change removes no privilege and ends no session, so none of the
+                // reasons the other handlers here have for refusing apply.
+                const std::string now = auth.renameUser(userId, was);
+                LOG_WARN << "admin " << actor.username << " renamed user " << userId
+                         << " to " << now;
+                Json::Value out;
+                out["username"] = now;
+                return drogon::HttpResponse::newHttpJsonResponse(out);
+            }));
+        },
+        {drogon::Post});
+
+    app.registerHandler(
         "/api/admin/users/{id}/password",
         [&auth](const drogon::HttpRequestPtr& req,
                 std::function<void(const drogon::HttpResponsePtr&)>&& callback,

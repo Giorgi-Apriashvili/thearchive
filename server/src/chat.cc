@@ -489,13 +489,19 @@ void registerChatRoutes(Database& db, Auth& auth) {
                     "SELECT * FROM ("
                     "  SELECT m.id, m.author_name, m.body, m.created_at, m.deleted_at, "
                     "         COALESCE(d.username, ''), m.user_id IS NULL, "
-                    "         COALESCE(a.role, '') "
+                    "         COALESCE(a.role, ''), "
+                    // Whether this message named *me*, decided by account rather than by
+                    // the client comparing names. Names can be changed and then reused,
+                    // so an old "@bob" may not mean today's bob.
+                    "         EXISTS(SELECT 1 FROM message_mentions mn "
+                    "                WHERE mn.message_id = m.id AND mn.user_id = ?4) "
                     "  FROM messages m LEFT JOIN users d ON d.id = m.deleted_by "
                     "  LEFT JOIN users a ON a.id = m.user_id "
-                    "  WHERE m.room_id = ? AND m.id > ? ORDER BY m.id DESC LIMIT ?"
+                    "  WHERE m.room_id = ?1 AND m.id > ?2 ORDER BY m.id DESC LIMIT ?3"
                     ") ORDER BY 1");
                 stmt.bind(1, roomId).bind(2, since)
-                    .bind(3, static_cast<std::int64_t>(kMaxMessagesPerFetch));
+                    .bind(3, static_cast<std::int64_t>(kMaxMessagesPerFetch))
+                    .bind(4, user.id);
                 while (stmt.step()) {
                     const std::int64_t id = stmt.columnInt(0);
                     Json::Value message;
@@ -516,6 +522,9 @@ void registerChatRoutes(Database& db, Auth& auth) {
                         message["author_departed"] = true;
                     } else {
                         message["author_role"] = stmt.columnText(7);
+                    }
+                    if (stmt.columnInt(8) != 0) {
+                        message["mentions_me"] = true;
                     }
                     if (lowest == 0) {
                         lowest = id;

@@ -55,6 +55,12 @@ public:
     void changePassword(const User& user, const std::string& current,
                         const std::string& next, const std::string& keepToken);
 
+    // Renames an account, and carries the rename into the username snapshots that chat
+    // keeps (messages.author_name, rooms.creator_name) so the person reads the same way
+    // everywhere. Sessions key on user_id and are left alone — a rename is not a reason
+    // to sign someone out. Returns the normalised name actually stored.
+    std::string renameUser(std::int64_t userId, const std::string& rawUsername);
+
     // Generates a password, sets it, and ends every session for that account. Returns
     // the plaintext, which is shown once and never stored. This is the only recovery
     // path there is: no mail leaves this system, so a forgotten password has nowhere

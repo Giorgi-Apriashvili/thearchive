@@ -374,18 +374,50 @@ check "an admin can invite to a room she did not create" \
     "$(code "$ALICE" POST "/api/chat/rooms/$WED/invite" '{"username":"carol"}')" "200"
 
 echo
+echo "=== a rename follows the person through their history ==="
+# The snapshots exist so a *deleted* member's history stays attributed, not to freeze a
+# display name. Renaming carries into them, so someone does not read as two people.
+BOBID=$(sql "SELECT id FROM users WHERE username='bob';")
+check "alice renames bob" \
+    "$(code "$ALICE" POST "/api/admin/users/$BOBID/username" '{"username":"robert"}')" "200"
+check "his old messages say so" \
+    "$(as "$ALICE" GET "/api/chat/rooms/$ROOM/messages" \
+       | py "import sys,json;print(json.load(sys.stdin)['messages'][0]['author'])")" "robert"
+check "so does the room he started" \
+    "$(as "$ALICE" GET /api/chat/rooms | room Wednesday | rf created_by)" "robert"
+check "and the member list" \
+    "$(as "$ALICE" GET "/api/chat/rooms/$ROOM/members" \
+       | py "import sys,json;print(','.join(sorted(m['username'] for m in json.load(sys.stdin)['members'])))")" \
+    "alice,carol,robert"
+# The mention snapshot deliberately does not follow: it mirrors the literal "@bob" in a
+# message body, which nobody may rewrite, and the client matches the two to decide what
+# to highlight. The link that matters is user_id.
+check "an old @bob stays @bob" \
+    "$(sql "SELECT DISTINCT mentioned_name FROM message_mentions;")" "bob"
+check "and still points at the same account" \
+    "$(sql "SELECT COUNT(*) FROM message_mentions WHERE user_id = $BOBID;")" "3"
+# Which is why 'was I named' is answered by account, not by comparing names: robert can
+# be renamed and 'bob' handed to someone else.
+check "he is still the one those messages named" \
+    "$(as "$BOB" GET "/api/chat/rooms/$ROOM/messages" \
+       | py "import sys,json;print(sum(1 for m in json.load(sys.stdin)['messages'] if m.get('mentions_me')))")" "3"
+check "and alice, who wrote them, is not" \
+    "$(as "$ALICE" GET "/api/chat/rooms/$ROOM/messages" \
+       | py "import sys,json;print(sum(1 for m in json.load(sys.stdin)['messages'] if m.get('mentions_me')))")" "0"
+check "renaming does not sign him out" "$(code "$BOB" GET /api/chat/rooms)" "200"
+
+echo
 echo "=== history outlives its author ==="
 # The regression the schema exists to prevent. Every other foreign key to users in this
 # database cascades; if these did, deleting bob would take the conversation with him.
 BEFORE=$(as "$ALICE" GET "/api/chat/rooms/$ROOM/messages" | bodies | wc -l)
-BOBID=$(sql "SELECT id FROM users WHERE username='bob';")
-check "alice deletes bob's account" "$(code "$ALICE" DELETE "/api/admin/users/$BOBID")" "200"
-check "the account is gone" "$(sql "SELECT COUNT(*) FROM users WHERE username='bob';")" "0"
+check "alice deletes his account" "$(code "$ALICE" DELETE "/api/admin/users/$BOBID")" "200"
+check "the account is gone" "$(sql "SELECT COUNT(*) FROM users WHERE id = $BOBID;")" "0"
 check "his messages are not" \
     "$(as "$ALICE" GET "/api/chat/rooms/$ROOM/messages" | bodies | wc -l)" "$BEFORE"
-check "and stay attributed to him" \
+check "and stay attributed to him, under the name he last had" \
     "$(as "$ALICE" GET "/api/chat/rooms/$ROOM/messages" \
-       | py "import sys,json;print(json.load(sys.stdin)['messages'][0]['author'])")" "bob"
+       | py "import sys,json;print(json.load(sys.stdin)['messages'][0]['author'])")" "robert"
 check "marked as an account that has left" \
     "$(as "$ALICE" GET "/api/chat/rooms/$ROOM/messages" \
        | py "import sys,json;print(json.load(sys.stdin)['messages'][0].get('author_departed'))")" "True"
@@ -393,7 +425,7 @@ check "and carries no role, since there is no account to have one" \
     "$(as "$ALICE" GET "/api/chat/rooms/$ROOM/messages" \
        | py "import sys,json;print(json.load(sys.stdin)['messages'][0].get('author_role'))")" "None"
 check "the room he created outlives him too" \
-    "$(as "$ALICE" GET /api/chat/rooms | room Wednesday | rf created_by)" "bob"
+    "$(as "$ALICE" GET /api/chat/rooms | room Wednesday | rf created_by)" "robert"
 check "but his membership is gone" \
     "$(as "$ALICE" GET /api/chat/rooms | room Saturday | rf member_count)" "2"
 

@@ -159,6 +159,10 @@ export interface ChatMessage {
    *  The client highlights these rather than re-deriving them from the text, so what is
    *  highlighted is exactly what a notifier would act on. */
   mentions?: string[]
+  /** Whether this message named *me*, answered by account rather than by comparing
+   *  names — a name can be changed and then taken by someone else, so an old `@bob`
+   *  may not mean today's bob. */
+  mentions_me?: boolean
 }
 
 export interface ChatBlocks {

@@ -213,6 +213,49 @@ void Auth::changePassword(const User& user, const std::string& current,
     tx.commit();
 }
 
+std::string Auth::renameUser(std::int64_t userId, const std::string& rawUsername) {
+    const std::string username = normaliseUsername(rawUsername);
+    validateUsername(username);
+
+    auto existing = db_.prepare("SELECT username FROM users WHERE id = ?");
+    existing.bind(1, userId);
+    if (!existing.step()) {
+        throw HttpError{404, "no such user"};
+    }
+    if (existing.columnText(0) == username) {
+        // Distinguished from "taken" on purpose: the name is indeed in use, but by the
+        // very account being renamed, and reporting a clash there reads as a bug.
+        throw HttpError{400, "that is already their username"};
+    }
+
+    auto taken = db_.prepare("SELECT 1 FROM users WHERE username = ? AND id != ?");
+    taken.bind(1, username).bind(2, userId);
+    if (taken.step()) {
+        throw HttpError{409, "username is taken"};
+    }
+
+    Transaction tx{db_};
+    auto update = db_.prepare("UPDATE users SET username = ? WHERE id = ?");
+    update.bind(1, username).bind(2, userId).run();
+
+    // The chat snapshots follow the account. They exist so a *deleted* member's history
+    // stays attributed, not to freeze a display name — and leaving them behind would
+    // mean someone's messages carried one name while their uploads carried another,
+    // since share_files.uploaded_by is a foreign key and updates for free.
+    auto authored = db_.prepare("UPDATE messages SET author_name = ? WHERE user_id = ?");
+    authored.bind(1, username).bind(2, userId).run();
+    auto created = db_.prepare("UPDATE rooms SET creator_name = ? WHERE created_by = ?");
+    created.bind(1, username).bind(2, userId).run();
+
+    // message_mentions.mentioned_name deliberately does NOT follow. It mirrors the
+    // literal "@name" in a message body, which nobody may rewrite, and the client
+    // matches the two against each other to decide what to highlight. The link to the
+    // account is user_id, and that is what a notifier reads.
+    tx.commit();
+
+    return username;
+}
+
 std::string Auth::resetPassword(std::int64_t userId) {
     // 12 characters of base64url, the same shape as an invite code: long enough to be
     // worth typing once and short enough to read down a phone line.
