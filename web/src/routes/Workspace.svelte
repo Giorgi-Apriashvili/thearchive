@@ -234,7 +234,13 @@
 <div class="mx-auto max-w-3xl px-4 py-10">
   <header class="flex items-baseline justify-between">
     <div>
-      <h1 class="wordmark text-3xl">Weekend<em>Archive</em></h1>
+      <h1>
+        <!-- A real navigation, not router.go(): clicking this while already on "/"
+             should reload the page, and the router short-circuits an unchanged path. -->
+        <a href="/" class="wordmark text-3xl transition hover:opacity-80" title="Reload">
+          Weekend<em>Archive</em>
+        </a>
+      </h1>
       <p class="mt-1 text-sm text-ink-500">Signed in as {me.username}</p>
     </div>
     <div class="flex items-center gap-4 text-xs">
