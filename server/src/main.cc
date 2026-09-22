@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <string>
 
+#include "admin.h"
 #include "auth.h"
 #include "db.h"
 #include "gc.h"
@@ -62,6 +63,7 @@ int main(int, char** argv) {
         archive::registerUploadRoutes(db, auth, dataDir);
         archive::registerShareRoutes(db, auth, dataDir);
         archive::storage::registerStorageRoutes(db, auth, dataDir);
+        archive::registerAdminRoutes(db, auth, dataDir);
         archive::scheduleGarbageCollection(db, dataDir);
 
         LOG_INFO << "public base url " << archive::publicBaseUrl();

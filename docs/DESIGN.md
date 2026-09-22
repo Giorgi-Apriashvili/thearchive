@@ -73,7 +73,8 @@ refcount in the DB tracks how many live shares point at each blob.
 ## Data model
 
 ```sql
-users(id, username, password_hash, created_at, quota_bytes, is_admin)
+users(id, username, password_hash, created_at, quota_bytes,
+      role, disabled_at)                                   -- user | privileged | admin
 invites(code, created_by, used_by, created_at, expires_at)
 sessions(token, user_id, created_at, expires_at)          -- token stored hashed
 
@@ -255,6 +256,12 @@ Two host-level details are worth planning around rather than discovering:
 | `POST` | `/api/auth/login` / `logout` | |
 | `GET` | `/api/me` | |
 | `POST` | `/api/invites` | issue a code — **admin only** |
+| `GET` | `/api/admin/users`, `/users/{id}` | list and per-user detail |
+| `POST` | `/api/admin/users/{id}/{role,disable,enable,revoke}` | |
+| `DELETE` | `/api/admin/users/{id}` | destructive, cascades |
+| `GET`/`DELETE` | `/api/admin/invites[/{code}]` | list; revoke an unredeemed code |
+| `GET`/`DELETE` | `/api/admin/shares[/{token}]` | every live share; revoke any |
+| `GET` | `/api/admin/overview` | totals, per-uploader usage, disk |
 | `OPTIONS` | `/files` | tus capability discovery |
 | `POST` | `/files` | create upload → `Location` |
 | `HEAD` | `/files/{id}` | `Upload-Offset` — where to resume |
@@ -275,6 +282,27 @@ nosniff`, and any type a browser might execute in our origin is downgraded to
 `application/octet-stream`. Range requests are honoured, so large downloads resume and
 video seeks work — Drogon's `newFileResponse` does not parse `Range` itself, so the
 handler computes the byte window and passes explicit offset/length.
+
+## Roles and the control panel
+
+Three tiers replace what was an `is_admin` boolean: `user`, `privileged`, `admin`.
+`privileged` grants nothing beyond `user` — it exists so the tier can be assigned before
+anyone decides what it should mean, without a second migration over live data. The old
+boolean was dropped rather than kept alongside, since two representations of one fact
+are exactly how they drift apart.
+
+Every `/api/admin/*` route is behind `requireAdmin`. The frontend hiding a link is
+presentation, not access control.
+
+Two guards matter more than they look. **The last administrator cannot be demoted,
+disabled or deleted**, and nobody can perform those actions on themselves: there is no
+recovery from an instance with no admin short of editing the database by hand. And
+**disabling deletes the account's sessions**, because `userForSession` rejecting a
+disabled user would otherwise leave an already-issued cookie working until it expired.
+
+Disabling is the reversible option and deletion is not — deleting cascades to shares and
+sessions, and the user's blobs lose their last reference and leave on the next sweep. The
+UI requires the username typed to confirm it.
 
 ## Previews
 

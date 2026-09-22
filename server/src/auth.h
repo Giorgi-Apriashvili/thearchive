@@ -22,8 +22,16 @@ std::string normaliseUsername(const std::string& raw);
 struct User {
     std::int64_t id = 0;
     std::string username;
-    bool isAdmin = false;
+    // "user", "privileged" or "admin". `privileged` is deliberately inert for now — it
+    // grants nothing beyond `user` — so the tier can be assigned before anyone decides
+    // what it should mean.
+    std::string role = "user";
+
+    bool isAdmin() const { return role == "admin"; }
 };
+
+// The roles that may be assigned, in ascending order of privilege.
+bool isValidRole(const std::string& role);
 
 class Auth {
 public:

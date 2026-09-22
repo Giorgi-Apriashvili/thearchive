@@ -95,6 +95,7 @@ add_executable(thearchive
     src/gc.cc
     src/zipstream.cc
     src/thumbnail.cc
+    src/admin.cc
     src/storage.cc
 )
 

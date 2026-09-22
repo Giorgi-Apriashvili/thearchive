@@ -162,7 +162,21 @@ constexpr const char* kSchemaV7 = R"SQL(
 ALTER TABLE blobs ADD COLUMN thumb INTEGER NOT NULL DEFAULT 0;  -- 0 none, 1 ready, 2 failed
 )SQL";
 
-constexpr std::array<Migration, 7> kMigrations{{
+// Roles replace the is_admin boolean. `privileged` currently behaves exactly like
+// `user`; it exists so a future tier can be granted without another migration over live
+// data. The old column is dropped rather than left in place: two representations of the
+// same fact is precisely how they drift apart.
+constexpr const char* kSchemaV8 = R"SQL(
+ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'user';
+UPDATE users SET role = 'admin' WHERE is_admin = 1;
+ALTER TABLE users DROP COLUMN is_admin;
+
+-- Disabling blocks sign-in and drops live sessions while leaving shares and uploads
+-- intact, so a contribution stays attributed to whoever made it.
+ALTER TABLE users ADD COLUMN disabled_at INTEGER;
+)SQL";
+
+constexpr std::array<Migration, 8> kMigrations{{
     {1, kSchemaV1},
     {2, kSchemaV2},
     {3, kSchemaV3},
@@ -170,6 +184,7 @@ constexpr std::array<Migration, 7> kMigrations{{
     {5, kSchemaV5},
     {6, kSchemaV6},
     {7, kSchemaV7},
+    {8, kSchemaV8},
 }};
 
 }  // namespace

@@ -11,6 +11,7 @@
     type StorageInfo,
   } from '../lib/api'
   import { bytes, shortDate, until } from '../lib/format'
+  import { link } from '../lib/router.svelte'
 
   let { me, onSignOut }: { me: Me; onSignOut: () => void } = $props()
 
@@ -230,8 +231,11 @@
     <div class="flex items-center gap-4 text-xs">
       <!-- Minting is admin-only server-side; showing the button to everyone would just
            offer a 403. -->
-      {#if me.is_admin}
+      {#if me.role === 'admin'}
         <button class="text-ink-500 hover:text-ink-300" onclick={makeInvite}>Invite</button>
+        <a href="/admin" onclick={(e) => link(e, '/admin')} class="text-ink-500 hover:text-ink-300">
+          Control panel
+        </a>
       {/if}
       <button class="text-ink-500 hover:text-ink-300" onclick={signOut}>Sign out</button>
     </div>

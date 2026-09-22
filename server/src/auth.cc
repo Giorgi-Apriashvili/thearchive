@@ -63,6 +63,10 @@ void validatePassword(const std::string& password) {
 
 }  // namespace
 
+bool isValidRole(const std::string& role) {
+    return role == "user" || role == "privileged" || role == "admin";
+}
+
 bool secureCookiesEnabled() {
     const char* value = std::getenv("ARCHIVE_SECURE_COOKIES");
     return value == nullptr || std::string{value} != "0";
@@ -134,8 +138,8 @@ std::string Auth::bootstrapAdmin(const std::string& rawUsername, const std::stri
 
     const std::string hash = crypto::hashPassword(password);
     auto insert = db_.prepare(
-        "INSERT INTO users (username, password_hash, created_at, is_admin) "
-        "VALUES (?, ?, ?, 1)");
+        "INSERT INTO users (username, password_hash, created_at, role) "
+        "VALUES (?, ?, ?, 'admin')");
     insert.bind(1, username).bind(2, hash).bind(3, nowSeconds()).run();
     return startSession(db_.lastInsertId());
 }
@@ -143,7 +147,8 @@ std::string Auth::bootstrapAdmin(const std::string& rawUsername, const std::stri
 std::string Auth::login(const std::string& rawUsername, const std::string& password) {
     // Lookup must normalise too: an account stored as `giorgi` has to be findable by
     // someone who typed `Giorgi` at the login form.
-    auto stmt = db_.prepare("SELECT id, password_hash FROM users WHERE username = ?");
+    auto stmt = db_.prepare(
+        "SELECT id, password_hash, disabled_at FROM users WHERE username = ?");
     stmt.bind(1, normaliseUsername(rawUsername));
 
     if (!stmt.step()) {
@@ -156,8 +161,14 @@ std::string Auth::login(const std::string& rawUsername, const std::string& passw
 
     const std::int64_t userId = stmt.columnInt(0);
     const std::string hash = stmt.columnText(1);
+    const bool disabled = !stmt.columnIsNull(2);
     if (!crypto::verifyPassword(hash, password)) {
         throw HttpError{401, "invalid credentials"};
+    }
+    if (disabled) {
+        // Verified first regardless, so a disabled account is not distinguishable from
+        // a wrong password by timing or by which error comes back.
+        throw HttpError{403, "this account has been disabled"};
     }
     return startSession(userId);
 }
@@ -167,14 +178,14 @@ std::optional<User> Auth::userForSession(const std::string& token) const {
         return std::nullopt;
     }
     auto stmt = db_.prepare(
-        "SELECT u.id, u.username, u.is_admin FROM sessions s "
+        "SELECT u.id, u.username, u.role FROM sessions s "
         "JOIN users u ON u.id = s.user_id "
-        "WHERE s.token = ? AND s.expires_at > ?");
+        "WHERE s.token = ? AND s.expires_at > ? AND u.disabled_at IS NULL");
     stmt.bind(1, crypto::sha256Hex(token)).bind(2, nowSeconds());
     if (!stmt.step()) {
         return std::nullopt;
     }
-    return User{stmt.columnInt(0), stmt.columnText(1), stmt.columnInt(2) != 0};
+    return User{stmt.columnInt(0), stmt.columnText(1), stmt.columnText(2)};
 }
 
 void Auth::logout(const std::string& token) {
@@ -206,7 +217,7 @@ User requireUser(const drogon::HttpRequestPtr& req, const Auth& auth) {
 
 User requireAdmin(const drogon::HttpRequestPtr& req, const Auth& auth) {
     const User user = requireUser(req, auth);
-    if (!user.isAdmin) {
+    if (!user.isAdmin()) {
         // 403 rather than 401: the session is perfectly valid, the account simply lacks
         // the permission, and re-authenticating would not change that.
         throw HttpError{403, "only an administrator can do that"};
@@ -325,7 +336,7 @@ void registerAuthRoutes(Auth& auth) {
                 const User user = requireUser(req, auth);
                 Json::Value body;
                 body["username"] = user.username;
-                body["is_admin"] = user.isAdmin;
+                body["role"] = user.role;
                 return drogon::HttpResponse::newHttpJsonResponse(body);
             }));
         },
