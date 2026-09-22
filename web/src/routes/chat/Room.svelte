@@ -2,14 +2,63 @@
   import { api, ApiError, type ChatMessage, type ChatRoom, type Me } from '../../lib/api'
   import { chat } from '../../lib/chat.svelte'
   import { chatTime } from '../../lib/format'
-  import { linkify } from '../../lib/linkify'
+  import { parseMessage } from '../../lib/message'
   import Confirm from '../../lib/Confirm.svelte'
+  import Members from './Members.svelte'
 
   let { room, me }: { room: ChatRoom; me: Me } = $props()
 
   let draft = $state('')
   let sending = $state(false)
   let error = $state('')
+
+  let showMembers = $state(false)
+  let composer = $state<HTMLTextAreaElement | null>(null)
+
+  // @-autocomplete. The candidate list is the room's membership, because that is what
+  // the server will resolve a mention against — offering a completion that would not
+  // resolve is a promise the send cannot keep.
+  let mentionQuery = $state<string | null>(null)
+  let mentionAt = $state(0)
+  let highlighted = $state(0)
+
+  const candidates = $derived.by(() => {
+    if (mentionQuery === null) return []
+    const names = (chat.members?.members ?? []).map((m) => m.username)
+    return names
+      .filter((n) => n !== me.username && n.startsWith(mentionQuery!))
+      .slice(0, 6)
+  })
+
+  // The @token the caret currently sits in, or null. Only a token that starts a word
+  // counts, matching how the server decides what is a mention.
+  function syncMentionQuery() {
+    const field = composer
+    if (!field) return
+    const upto = draft.slice(0, field.selectionStart ?? 0)
+    const match = upto.match(/(?:^|[^\w.-])@([\w.-]*)$/)
+    if (!match) {
+      mentionQuery = null
+      return
+    }
+    mentionQuery = match[1].toLowerCase()
+    mentionAt = upto.length - match[1].length - 1
+    highlighted = 0
+  }
+
+  function complete(name: string) {
+    const field = composer
+    if (!field) return
+    const end = (field.selectionStart ?? 0)
+    draft = `${draft.slice(0, mentionAt)}@${name} ${draft.slice(end)}`
+    mentionQuery = null
+    const caret = mentionAt + name.length + 2
+    // The caret has to move after Svelte writes the new value back into the field.
+    queueMicrotask(() => {
+      field.focus()
+      field.setSelectionRange(caret, caret)
+    })
+  }
 
   let inviting = $state(false)
   let inviteName = $state('')
@@ -49,6 +98,7 @@
     try {
       await api.post(`/api/chat/rooms/${room.id}/messages`, { body })
       draft = ''
+      mentionQuery = null
       pinned = true
       await chat.refresh()
     } catch (e) {
@@ -59,8 +109,28 @@
   }
 
   // Enter sends, Shift+Enter breaks the line — the convention everywhere else, and the
-  // textarea exists only so the second one is possible.
+  // textarea exists only so the second one is possible. While the completion list is
+  // open, Enter and Tab take the highlighted name instead: a list you can see but
+  // cannot accept with the keyboard is a list you end up reaching for the mouse past.
   function onKeydown(event: KeyboardEvent) {
+    if (candidates.length > 0) {
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault()
+        const step = event.key === 'ArrowDown' ? 1 : candidates.length - 1
+        highlighted = (highlighted + step) % candidates.length
+        return
+      }
+      if (event.key === 'Enter' || event.key === 'Tab') {
+        event.preventDefault()
+        complete(candidates[highlighted])
+        return
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        mentionQuery = null
+        return
+      }
+    }
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault()
       ;(event.currentTarget as HTMLTextAreaElement).form?.requestSubmit()
@@ -76,6 +146,7 @@
       await api.post(`/api/chat/rooms/${room.id}/invite`, { username })
       inviteName = ''
       inviting = false
+      await chat.loadMembers()
       // Deliberately not "they have been invited": the server reports success even when
       // the invitee has blocked the inviter, so that a block is not disclosed. Saying
       // more than this would be saying something we do not know.
@@ -105,13 +176,21 @@
 </script>
 
 <div class="flex h-[34rem] flex-col rounded-xl border border-ink-800">
-  <header class="flex items-center justify-between gap-3 border-b border-ink-800 px-4 py-2.5">
+  <header class="relative flex items-center justify-between gap-3 border-b border-ink-800 px-4 py-2.5">
     <div class="min-w-0">
       <h2 class="truncate text-sm text-ink-100">{room.name}</h2>
       <p class="truncate text-xs text-ink-500">
-        {room.member_count} member{room.member_count === 1 ? '' : 's'} · started by {room.created_by}
+        <button
+          onclick={() => (showMembers = !showMembers)}
+          class="underline decoration-dotted underline-offset-2 transition hover:text-ink-300"
+          aria-expanded={showMembers}
+        >{room.member_count} member{room.member_count === 1 ? '' : 's'}</button>
+        · started by {room.created_by}
       </p>
     </div>
+    {#if showMembers}
+      <Members members={chat.members} roomName={room.name} onClose={() => (showMembers = false)} />
+    {/if}
     {#if canInvite}
       <button
         class="shrink-0 text-xs text-ink-500 hover:text-ink-300"
@@ -175,12 +254,16 @@
                that Svelte keeps escaping both the text and the href — this is the one
                place in the app where another person's arbitrary text reaches the DOM. -->
           <p class="mt-0.5 whitespace-pre-wrap break-words text-sm text-ink-100">
-            {#each linkify(message.body ?? '') as segment}{#if segment.href}<a
+            {#each parseMessage(message.body ?? '', message.mentions ?? []) as segment}{#if segment.href}<a
                   href={segment.href}
                   target="_blank"
                   rel="noopener noreferrer"
                   class="text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-accent"
                   >{segment.text}</a
+                >{:else if segment.mention}<span
+                  class="rounded px-0.5 font-medium {segment.mention === me.username
+                    ? 'bg-accent/20 text-accent'
+                    : 'text-ink-300'}">{segment.text}</span
                 >{:else}{segment.text}{/if}{/each}
           </p>
         {/if}
@@ -195,10 +278,36 @@
     <p class="border-t border-ink-800 px-4 py-2 text-xs text-red-400">{error}</p>
   {/if}
 
-  <form onsubmit={send} class="flex items-end gap-2 border-t border-ink-800 px-4 py-3">
+  <form onsubmit={send} class="relative flex items-end gap-2 border-t border-ink-800 px-4 py-3">
+    {#if candidates.length}
+      <ul
+        class="absolute bottom-full left-4 z-20 mb-1 w-48 overflow-hidden rounded-lg border border-ink-700 bg-ink-900 shadow-xl"
+      >
+        {#each candidates as name, i (name)}
+          <li>
+            <button
+              type="button"
+              onmousedown={(e) => {
+                // mousedown, not click: click fires after the textarea has already lost
+                // focus, and the caret position it needs is gone by then.
+                e.preventDefault()
+                complete(name)
+              }}
+              class="block w-full px-3 py-1.5 text-left text-xs transition {i === highlighted
+                ? 'bg-accent/15 text-accent'
+                : 'text-ink-300 hover:bg-ink-800'}"
+            >@{name}</button>
+          </li>
+        {/each}
+      </ul>
+    {/if}
     <textarea
+      bind:this={composer}
       bind:value={draft}
       onkeydown={onKeydown}
+      oninput={syncMentionQuery}
+      onclick={syncMentionQuery}
+      onblur={() => (mentionQuery = null)}
       rows="1"
       maxlength="4000"
       placeholder="Message {room.name}"

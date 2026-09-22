@@ -122,6 +122,23 @@ export interface ChatRoom {
   invited_by?: string
   /** Only when `state` is `member`. */
   unread?: number
+  /** Unread messages that named me. A subset of `unread`, counted separately so the
+   *  badge can say "you were asked something" rather than "something happened". */
+  mentions_unread?: number
+}
+
+export interface RoomMember {
+  username: string
+  /** Joined, or — for a pending invitation — invited. */
+  since: number
+  is_creator: boolean
+}
+
+export interface RoomMembers {
+  members: RoomMember[]
+  /** Outstanding invitations. Declines are never listed: whether someone turned an
+   *  invitation down is their business, not a status the room displays about them. */
+  invited: RoomMember[]
 }
 
 export interface ChatMessage {
@@ -134,6 +151,10 @@ export interface ChatMessage {
   deleted_by?: string
   /** The author's account has since been deleted; the message stays attributed. */
   author_departed?: boolean
+  /** Usernames this message named with @, as the server resolved them at send time.
+   *  The client highlights these rather than re-deriving them from the text, so what is
+   *  highlighted is exactly what a notifier would act on. */
+  mentions?: string[]
 }
 
 export interface ChatBlocks {

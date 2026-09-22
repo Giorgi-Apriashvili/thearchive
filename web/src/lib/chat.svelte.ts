@@ -11,7 +11,7 @@
 // otherwise a new message would go unannounced until you happened to open the chat tab,
 // which rather defeats the point. Messages poll quickly, and only while a room is open.
 
-import { api, ApiError, type ChatMessage, type ChatRoom } from './api'
+import { api, ApiError, type ChatMessage, type ChatRoom, type RoomMembers } from './api'
 
 const MESSAGE_MS = 2000
 const ROOM_MS = 10000
@@ -27,6 +27,9 @@ class ChatStore {
   messages = $state<ChatMessage[]>([])
   loadingMessages = $state(false)
   messagesError = $state('')
+  /** Who is in the open room. Feeds the header's member list and the composer's @
+   *  autocomplete, which is why it is here rather than local to a component. */
+  members = $state<RoomMembers | null>(null)
 
   #roomTimer: ReturnType<typeof setInterval> | null = null
   #messageTimer: ReturnType<typeof setInterval> | null = null
@@ -44,6 +47,10 @@ class ChatStore {
 
   get totalUnread(): number {
     return this.rooms.reduce((sum, r) => sum + (r.unread ?? 0), 0)
+  }
+
+  get totalMentions(): number {
+    return this.rooms.reduce((sum, r) => sum + (r.mentions_unread ?? 0), 0)
   }
 
   /** The slow poll: room list and unread badges. Started once by the signed-in shell
@@ -97,7 +104,11 @@ class ChatStore {
       // An admin removal replaces the body of a message the cursor has already passed,
       // so an incremental poll would never learn of it. Every fifth poll re-reads the
       // room in full, which picks up tombstones and self-heals any drift.
-      await this.#pollMessages(++this.#polls % FULL_EVERY === 0)
+      const full = ++this.#polls % FULL_EVERY === 0
+      await this.#pollMessages(full)
+      // Membership changes are rare enough to ride along with that slower beat rather
+      // than getting a request of their own.
+      if (full) await this.loadMembers()
     } finally {
       this.#messagesInFlight = false
     }
@@ -118,15 +129,28 @@ class ChatStore {
     if (id === this.openId) return
     this.openId = id
     this.messages = []
+    this.members = null
     this.messagesError = ''
     this.#cursor = 0
     this.#marked = 0
     if (id === null) return
     this.loadingMessages = true
     try {
-      await this.#pollMessages()
+      await Promise.all([this.#pollMessages(), this.loadMembers()])
     } finally {
       this.loadingMessages = false
+    }
+  }
+
+  async loadMembers() {
+    const room = this.openId
+    if (room === null) return
+    try {
+      const members = await api.get<RoomMembers>(`/api/chat/rooms/${room}/members`)
+      if (this.openId === room) this.members = members
+    } catch {
+      // The header falls back to the count it already has from the room list, and the
+      // composer simply offers no completions. Neither is worth an error banner.
     }
   }
 

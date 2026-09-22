@@ -1,5 +1,5 @@
-// Splits a message into plain runs and link runs, so the component can render links
-// with `<a href={...}>` and text with `{segment.text}`.
+// Splits a message into plain runs, link runs and mention runs, so the component can
+// render each with the right element and `{segment.text}` for the text itself.
 //
 // It deliberately returns data rather than markup. The tempting version of this — a
 // regex replace producing `<a href="...">` fed to {@html} — hands every member of the
@@ -14,8 +14,10 @@
 
 export interface Segment {
   text: string
-  /** Present on a link run. Absent runs are plain text. */
+  /** Present on a link run. */
   href?: string
+  /** The username on a mention run. Runs with neither are plain text. */
+  mention?: string
 }
 
 const URL_PATTERN = /https?:\/\/[^\s<>]+/gi
@@ -55,7 +57,7 @@ function safeHref(candidate: string): string | null {
   }
 }
 
-export function linkify(body: string): Segment[] {
+function linkify(body: string): Segment[] {
   const segments: Segment[] = []
   let cursor = 0
 
@@ -75,4 +77,39 @@ export function linkify(body: string): Segment[] {
 
   if (cursor < body.length) segments.push({ text: body.slice(cursor) })
   return segments
+}
+
+// Matches the server's idea of where an @name ends — see isNameChar in chat.cc. The two
+// have to agree, or the client highlights something the server did not record, or misses
+// something it did.
+const MENTION_PATTERN = /(^|[^\w.-])@([\w.-]+)/g
+
+// `mentions` is the list the server resolved at send time, not a guess. A name that is
+// not in it stays plain text, which is what makes `@someone-who-left` read as the text
+// it now is rather than as a live reference to nobody.
+function markMentions(segment: Segment, mentions: string[]): Segment[] {
+  if (segment.href !== undefined || mentions.length === 0) return [segment]
+
+  const out: Segment[] = []
+  const body = segment.text
+  let cursor = 0
+
+  for (const match of body.matchAll(MENTION_PATTERN)) {
+    const name = match[2].toLowerCase()
+    if (!mentions.includes(name)) continue
+    // match.index points at the boundary character, if any; the @ follows it.
+    const at = (match.index ?? 0) + match[1].length
+    if (at > cursor) out.push({ text: body.slice(cursor, at) })
+    out.push({ text: `@${match[2]}`, mention: name })
+    cursor = at + 1 + match[2].length
+  }
+
+  if (out.length === 0) return [segment]
+  if (cursor < body.length) out.push({ text: body.slice(cursor) })
+  return out
+}
+
+/** Link and mention runs for one message body. */
+export function parseMessage(body: string, mentions: string[] = []): Segment[] {
+  return linkify(body).flatMap((segment) => markMentions(segment, mentions))
 }

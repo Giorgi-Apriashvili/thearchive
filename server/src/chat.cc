@@ -3,7 +3,10 @@
 #include <drogon/drogon.h>
 
 #include <algorithm>
+#include <cctype>
+#include <map>
 #include <string>
+#include <vector>
 
 #include "httputil.h"
 
@@ -51,6 +54,65 @@ bool isRoomCreator(Database& db, std::int64_t roomId, std::int64_t userId) {
     auto stmt = db.prepare("SELECT 1 FROM rooms WHERE id = ? AND created_by = ?");
     stmt.bind(1, roomId).bind(2, userId);
     return stmt.step();
+}
+
+// The characters a username can contain, which is what bounds an @token. Usernames are
+// already normalised to lowercase, so a mention is matched lowercased and `@Bob` finds
+// bob — writing someone's name with a capital letter should not fail to reach them.
+bool isNameChar(unsigned char c) {
+    return std::isalnum(c) != 0 || c == '_' || c == '-' || c == '.';
+}
+
+// Every distinct @name in a message, lowercased, in the order written. Resolution
+// against the room's membership happens at the call site: this only tokenises.
+std::vector<std::string> mentionedNames(const std::string& body) {
+    std::vector<std::string> names;
+    for (std::size_t i = 0; i < body.size(); ++i) {
+        if (body[i] != '@') {
+            continue;
+        }
+        // Must start a word. Without this, an email address in a message would mention
+        // whoever happens to share a name with the mail host.
+        if (i > 0 && isNameChar(static_cast<unsigned char>(body[i - 1]))) {
+            continue;
+        }
+        std::size_t end = i + 1;
+        while (end < body.size() && isNameChar(static_cast<unsigned char>(body[end]))) {
+            ++end;
+        }
+        if (end == i + 1) {
+            continue;
+        }
+        std::string name = body.substr(i + 1, end - i - 1);
+        std::transform(name.begin(), name.end(), name.begin(),
+                       [](unsigned char c) { return std::tolower(c); });
+        if (std::find(names.begin(), names.end(), name) == names.end()) {
+            names.push_back(name);
+        }
+        i = end - 1;
+    }
+    return names;
+}
+
+// Records the mentions a message makes, resolved against who is actually in the room.
+// An @name that belongs to nobody here records nothing: it is text, and treating it as a
+// mention would let a message claim to have notified someone it never could.
+void recordMentions(Database& db, std::int64_t messageId, std::int64_t roomId,
+                    const std::string& body) {
+    for (const std::string& name : mentionedNames(body)) {
+        auto find = db.prepare(
+            "SELECT u.id FROM users u "
+            "JOIN room_members m ON m.user_id = u.id AND m.room_id = ? "
+            "WHERE u.username = ? AND m.state = 'member'");
+        find.bind(1, roomId).bind(2, name);
+        if (!find.step()) {
+            continue;
+        }
+        auto insert = db.prepare(
+            "INSERT INTO message_mentions (message_id, user_id, mentioned_name) "
+            "VALUES (?, ?, ?) ON CONFLICT DO NOTHING");
+        insert.bind(1, messageId).bind(2, find.columnInt(0)).bind(3, name).run();
+    }
 }
 
 }  // namespace
@@ -113,7 +175,14 @@ void registerChatRoutes(Database& db, Auth& auth) {
                     "        WHERE msg.room_id = r.id AND msg.deleted_at IS NULL "
                     "          AND msg.id > COALESCE(m.last_read_id, 0)), "
                     "       (SELECT COUNT(*) FROM room_members mm "
-                    "        WHERE mm.room_id = r.id AND mm.state = 'member') "
+                    "        WHERE mm.room_id = r.id AND mm.state = 'member'), "
+                    // Unread messages that named me. A removed message is excluded: a
+                    // badge pointing at a tombstone is a summons to nothing.
+                    "       (SELECT COUNT(*) FROM message_mentions mn "
+                    "        JOIN messages msg ON msg.id = mn.message_id "
+                    "        WHERE mn.user_id = ?1 AND msg.room_id = r.id "
+                    "          AND msg.deleted_at IS NULL "
+                    "          AND msg.id > COALESCE(m.last_read_id, 0)) "
                     "FROM rooms r "
                     "LEFT JOIN room_members m ON m.room_id = r.id AND m.user_id = ?1 "
                     "LEFT JOIN users inv ON inv.id = m.invited_by "
@@ -138,6 +207,7 @@ void registerChatRoutes(Database& db, Auth& auth) {
                     // because they have no reads.
                     if (state == "member") {
                         room["unread"] = static_cast<Json::Int64>(stmt.columnInt(7));
+                        room["mentions_unread"] = static_cast<Json::Int64>(stmt.columnInt(9));
                     }
                     out.append(room);
                 }
@@ -147,6 +217,50 @@ void registerChatRoutes(Database& db, Auth& auth) {
             }));
         },
         {drogon::Get, drogon::Post});
+
+    // ---- members ---------------------------------------------------------------------
+    app.registerHandler(
+        "/api/chat/rooms/{id}/members",
+        [&db, &auth](const drogon::HttpRequestPtr& req,
+                     std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                     const std::string& id) {
+            callback(guarded([&] {
+                const User user = requireUser(req, auth);
+                const std::int64_t roomId = requireRoomMember(db, parseId(id, "room"), user);
+
+                // Members and outstanding invitations. Declines are deliberately absent:
+                // whether someone turned an invitation down is their business, not a
+                // status the room gets to display about them. The creator learns it the
+                // only way that matters anyway — the pending entry stops being listed.
+                Json::Value members{Json::arrayValue};
+                Json::Value invited{Json::arrayValue};
+                auto stmt = db.prepare(
+                    "SELECT u.username, m.state, m.responded_at, m.invited_at, "
+                    "       r.created_by = u.id "
+                    "FROM room_members m JOIN users u ON u.id = m.user_id "
+                    "JOIN rooms r ON r.id = m.room_id "
+                    "WHERE m.room_id = ? AND m.state IN ('member', 'invited') "
+                    "ORDER BY m.state = 'invited', COALESCE(m.responded_at, m.invited_at)");
+                stmt.bind(1, roomId);
+                while (stmt.step()) {
+                    Json::Value row;
+                    row["username"] = stmt.columnText(0);
+                    const bool isMember = stmt.columnText(1) == "member";
+                    row["since"] = static_cast<Json::Int64>(
+                        stmt.columnIsNull(2) ? stmt.columnInt(3) : stmt.columnInt(2));
+                    row["is_creator"] = stmt.columnInt(4) != 0;
+                    (isMember ? members : invited).append(row);
+                }
+
+                Json::Value out;
+                out["members"] = members;
+                out["invited"] = invited;
+                auto resp = drogon::HttpResponse::newHttpJsonResponse(out);
+                resp->addHeader("Cache-Control", "no-store");
+                return resp;
+            }));
+        },
+        {drogon::Get});
 
     // ---- invite ------------------------------------------------------------------
     app.registerHandler(
@@ -314,6 +428,7 @@ void registerChatRoutes(Database& db, Auth& auth) {
                         throw HttpError{400, "a message is at most 4000 characters"};
                     }
 
+                    Transaction tx{db};
                     auto insert = db.prepare(
                         "INSERT INTO messages (room_id, user_id, author_name, body, "
                         "created_at) VALUES (?, ?, ?, ?, ?)");
@@ -321,12 +436,18 @@ void registerChatRoutes(Database& db, Auth& auth) {
                         .bind(4, body).bind(5, nowSeconds()).run();
                     const std::int64_t messageId = db.lastInsertId();
 
+                    // In the same transaction as the message: a message that is visible
+                    // but not yet indexed for mentions is a notification that silently
+                    // never fires.
+                    recordMentions(db, messageId, roomId, body);
+
                     // Your own message is read by definition.
                     auto read = db.prepare(
                         "UPDATE room_members SET last_read_id = ? "
                         "WHERE room_id = ? AND user_id = ? AND last_read_id < ?");
                     read.bind(1, messageId).bind(2, roomId).bind(3, user.id)
                         .bind(4, messageId).run();
+                    tx.commit();
 
                     Json::Value out;
                     out["id"] = static_cast<Json::Int64>(messageId);
@@ -353,6 +474,12 @@ void registerChatRoutes(Database& db, Auth& auth) {
                 // behind skips what it missed. That only happens to a tab that was shut,
                 // and a shut tab reopens at since=0 anyway.
                 Json::Value messages{Json::arrayValue};
+                // Message id -> its index in `messages`, so the mention pass below can
+                // attach names without rescanning the array per row.
+                std::map<std::int64_t, Json::ArrayIndex> positions;
+                std::int64_t lowest = 0;
+                std::int64_t highest = 0;
+
                 auto stmt = db.prepare(
                     "SELECT * FROM ("
                     "  SELECT m.id, m.author_name, m.body, m.created_at, m.deleted_at, "
@@ -363,8 +490,9 @@ void registerChatRoutes(Database& db, Auth& auth) {
                 stmt.bind(1, roomId).bind(2, since)
                     .bind(3, static_cast<std::int64_t>(kMaxMessagesPerFetch));
                 while (stmt.step()) {
+                    const std::int64_t id = stmt.columnInt(0);
                     Json::Value message;
-                    message["id"] = static_cast<Json::Int64>(stmt.columnInt(0));
+                    message["id"] = static_cast<Json::Int64>(id);
                     message["author"] = stmt.columnText(1);
                     message["created_at"] = static_cast<Json::Int64>(stmt.columnInt(3));
                     // A removed message keeps its place as a tombstone. Closing the gap
@@ -379,7 +507,31 @@ void registerChatRoutes(Database& db, Auth& auth) {
                     if (stmt.columnInt(6) != 0) {
                         message["author_departed"] = true;
                     }
+                    if (lowest == 0) {
+                        lowest = id;
+                    }
+                    highest = id;
+                    positions[id] = messages.size();
                     messages.append(message);
+                }
+
+                // Mentions in one query over the page's id range, rather than one query
+                // per message. The client is told who the server resolved rather than
+                // re-deriving it from the text, so what is highlighted is exactly what a
+                // notifier would act on.
+                if (!positions.empty()) {
+                    auto names = db.prepare(
+                        "SELECT mm.message_id, mm.mentioned_name "
+                        "FROM message_mentions mm JOIN messages m ON m.id = mm.message_id "
+                        "WHERE m.room_id = ? AND mm.message_id BETWEEN ? AND ? "
+                        "ORDER BY mm.message_id");
+                    names.bind(1, roomId).bind(2, lowest).bind(3, highest);
+                    while (names.step()) {
+                        const auto found = positions.find(names.columnInt(0));
+                        if (found != positions.end()) {
+                            messages[found->second]["mentions"].append(names.columnText(1));
+                        }
+                    }
                 }
 
                 Json::Value out;

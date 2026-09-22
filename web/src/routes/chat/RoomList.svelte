@@ -92,8 +92,17 @@
               {room.name}
             </span>
             {#if room.unread}
-              <span class="tnum shrink-0 rounded-full bg-accent px-1.5 text-[10px] font-medium text-ink-950">
-                {room.unread}
+              <!-- Being named is a different event from something having happened, so it
+                   reads differently: @3 rather than 3. -->
+              <span
+                class="tnum shrink-0 rounded-full px-1.5 text-[10px] font-medium {room.mentions_unread
+                  ? 'bg-accent text-ink-950 ring-2 ring-accent/30'
+                  : 'bg-ink-700 text-ink-100'}"
+                title={room.mentions_unread
+                  ? `${room.mentions_unread} of these mention you`
+                  : 'unread messages'}
+              >
+                {room.mentions_unread ? `@${room.mentions_unread}` : room.unread}
               </span>
             {:else if room.state === 'invited'}
               <span class="shrink-0 rounded border border-accent/50 px-1 text-[10px] uppercase text-accent">

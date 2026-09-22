@@ -99,6 +99,9 @@ messages(id, room_id → rooms CASCADE, user_id → users SET NULL,
          author_name, body, created_at, deleted_at, deleted_by)
 room_blocks(user_id, room_id, created_at, PK(user_id, room_id))
 user_blocks(user_id, blocked_id, created_at, PK(user_id, blocked_id))
+
+message_mentions(message_id → messages CASCADE, user_id → users SET NULL,
+                 mentioned_name, PK(message_id, mentioned_name))
 ```
 
 A **share** holds one or more files — a whole night goes out as one link. `token` is 128
@@ -288,6 +291,7 @@ Two host-level details are worth planning around rather than discovering:
 | `GET` | `/d/{token}/{fileId}/inline` | the original served `inline`, for `<video>` (public) |
 | `GET` | `/d/{token}/all.zip` | every file, streamed as one archive (public) |
 | `GET`/`POST` | `/api/chat/rooms` | every room annotated with my state; create one |
+| `GET` | `/api/chat/rooms/{id}/members` | members, plus outstanding invitations |
 | `POST` | `/api/chat/rooms/{id}/invite` | `{username}` — **creator or admin** |
 | `POST` | `/api/chat/rooms/{id}/respond` | `accept` \| `decline` \| `block_room` \| `block_user` |
 | `GET`/`POST` | `/api/chat/rooms/{id}/messages` | members only; `?since=` is a cursor |
@@ -456,6 +460,45 @@ One consequence of an incremental cursor: a tombstone lands on an id the cursor 
 already passed, so it would never arrive. Every fifth message poll therefore re-reads the
 room in full, which picks up removals and self-heals any drift.
 
+### Who is in a room
+
+`GET /api/chat/rooms/{id}/members` is members-only like everything else, and returns
+members plus **outstanding invitations** — the pending list is what stops a creator
+re-inviting someone who simply has not answered yet.
+
+Declines are never returned. Whether someone turned an invitation down is their
+business, not a status the room displays about them; the creator learns it the only way
+that matters anyway, which is that the pending entry stops being listed.
+
+### @mentions
+
+Mentions are resolved **once, at send time**, against the room's membership, and stored
+in `message_mentions`. They are not re-parsed from the body on every read. Three things
+follow, and all three are the reason it is done this way:
+
+- a mention is a fact the server holds, so a notifier is a query rather than a migration
+  plus a backfill over every message ever sent;
+- what the client highlights is exactly what a notifier would act on, because it renders
+  the resolved list rather than re-deriving one from the text;
+- an `@name` typed before that person joined stays text forever, rather than quietly
+  becoming a live mention the day they accept an invitation.
+
+An `@name` matching nobody *in that room* records nothing — treating it as a mention
+would let a message claim to have notified someone it never could. `@` mid-word is not a
+mention either, or every email address would name its mail host. The client's
+`MENTION_PATTERN` and the server's `isNameChar` have to agree on where a name ends; they
+are commented as a pair.
+
+`user_id` drops to `NULL` when an account goes, with `mentioned_name` keeping the
+rendering stable — the same split as `messages`. A notifier reads rows with a live
+`user_id` and ignores the rest, since there is nobody left to notify.
+
+`GET /api/chat/rooms` returns `mentions_unread` beside `unread`, counting unread messages
+that named you and excluding removed ones — a badge pointing at a tombstone is a summons
+to nothing. The UI renders that differently (`@3` rather than `3`), because being named
+is a different event from something having happened. **Nothing is delivered yet**; the
+count is the substrate a notifier will read.
+
 ### Rendering
 
 Message bodies go through `{message.body}`, never `{@html}`. Svelte escapes by default,
@@ -473,6 +516,9 @@ flight — switching tabs mid-upload would quietly cost someone a 3 GB video.
   settings, renaming or deleting a room, and message search. Each is additive; none was
   needed to know whether the core works. Leaving a room is not there either — the only
   way out today is never having accepted.
+- **Delivering notifications.** `message_mentions` and `mentions_unread` exist and are
+  populated; nothing acts on them yet. Whatever comes — web push, email, a digest —
+  reads those rows rather than needing new ones.
 - **EXIF extraction.** `client_mtime` gives a usable timestamp today; capture time,
   camera and orientation would need libexif and matter mainly to an archival mode.
 - Email. Invites are codes you paste into a chat; no SMTP anywhere.

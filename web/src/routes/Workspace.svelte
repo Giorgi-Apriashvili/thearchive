@@ -86,8 +86,13 @@
     >
       Chat
       {#if chat.totalUnread > 0 && tab !== 'chat'}
-        <span class="tnum rounded-full bg-accent px-1.5 text-[10px] font-medium text-ink-950">
-          {chat.totalUnread}
+        <span
+          class="tnum rounded-full px-1.5 text-[10px] font-medium {chat.totalMentions
+            ? 'bg-accent text-ink-950'
+            : 'bg-ink-700 text-ink-100'}"
+          title={chat.totalMentions ? `${chat.totalMentions} mention you` : 'unread messages'}
+        >
+          {chat.totalMentions ? `@${chat.totalMentions}` : chat.totalUnread}
         </span>
       {/if}
     </a>
