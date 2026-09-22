@@ -12,6 +12,7 @@
   } from '../lib/api'
   import { bytes, shortDate, until } from '../lib/format'
   import { link } from '../lib/router.svelte'
+  import Confirm from '../lib/Confirm.svelte'
 
   let { me, onSignOut }: { me: Me; onSignOut: () => void } = $props()
 
@@ -211,7 +212,10 @@
     await loadShares()
   }
 
+  let confirmingInvite = $state(false)
+
   async function makeInvite() {
+    confirmingInvite = false
     const result = await api.post<{ code: string }>('/api/invites')
     inviteCode = result.code
   }
@@ -232,7 +236,7 @@
       <!-- Minting is admin-only server-side; showing the button to everyone would just
            offer a 403. -->
       {#if me.role !== 'user'}
-        <button class="text-ink-500 hover:text-ink-300" onclick={makeInvite}>Invite</button>
+        <button class="text-ink-500 hover:text-ink-300" onclick={() => (confirmingInvite = true)}>Invite</button>
       {/if}
       {#if me.role === 'admin'}
         <a href="/admin" onclick={(e) => link(e, '/admin')} class="text-ink-500 hover:text-ink-300">
@@ -492,3 +496,13 @@
     </section>
   {/if}
 </div>
+
+{#if confirmingInvite}
+  <Confirm
+    title="Create an invite code?"
+    body="Creates a code that lets one person register an account. It is valid for 14 days and works for whoever holds it, so treat it like a password — anyone it reaches can join."
+    confirmLabel="Create invite"
+    onConfirm={makeInvite}
+    onCancel={() => (confirmingInvite = false)}
+  />
+{/if}
