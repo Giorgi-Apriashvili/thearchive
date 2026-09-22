@@ -64,7 +64,14 @@ void validatePassword(const std::string& password) {
 }  // namespace
 
 bool isValidRole(const std::string& role) {
-    return role == "user" || role == "privileged" || role == "admin";
+    return roleRank(role) >= 0;
+}
+
+int roleRank(const std::string& role) {
+    if (role == "user") return 0;
+    if (role == "privileged") return 1;
+    if (role == "admin") return 2;
+    return -1;  // fail closed
 }
 
 bool secureCookiesEnabled() {
@@ -215,12 +222,13 @@ User requireUser(const drogon::HttpRequestPtr& req, const Auth& auth) {
     return *user;
 }
 
-User requireAdmin(const drogon::HttpRequestPtr& req, const Auth& auth) {
+User requireRole(const drogon::HttpRequestPtr& req, const Auth& auth,
+                 const std::string& minimum) {
     const User user = requireUser(req, auth);
-    if (!user.isAdmin()) {
+    if (roleRank(user.role) < roleRank(minimum)) {
         // 403 rather than 401: the session is perfectly valid, the account simply lacks
         // the permission, and re-authenticating would not change that.
-        throw HttpError{403, "only an administrator can do that"};
+        throw HttpError{403, "this needs " + minimum + " access"};
     }
     return user;
 }
@@ -347,11 +355,11 @@ void registerAuthRoutes(Auth& auth) {
         [&auth](const drogon::HttpRequestPtr& req,
                 std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
             callback(guarded([&] {
-                // Admin-only. Registration is invite-gated precisely so an open signup
-                // cannot turn a public host into a phishing target; if every member
-                // could mint unlimited codes, that gate would only ever be as strong as
-                // the least careful account.
-                const User user = requireAdmin(req, auth);
+                // Privileged and above. Registration stays invite-gated so an open
+                // signup cannot turn a public host into a phishing target, but vouching
+                // for a newcomer no longer has to route through a single person —
+                // that is what the tier is for.
+                const User user = requireRole(req, auth, "privileged");
                 Json::Value body;
                 body["code"] = auth.createInvite(user.id);
                 return drogon::HttpResponse::newHttpJsonResponse(body);

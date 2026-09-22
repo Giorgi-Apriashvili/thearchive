@@ -121,8 +121,10 @@ code=$(curl -s -o /dev/null -w '%{http_code}' -b "$JAR" -X POST "$BASE/api/admin
     -H 'Content-Type: application/json' -d '{"role":"privileged"}')
 check "can promote to privileged" "$code" "200"
 check "role persisted" "$(curl -s -b "$JAR" "$BASE/api/admin/users/$MIXED" | python3 -c 'import sys,json;print(json.load(sys.stdin)["role"])')" "privileged"
-check "privileged still cannot mint invites" \
-    "$(curl -s -o /dev/null -w '%{http_code}' -b "$CASEJAR" -X POST "$BASE/api/invites")" "403"
+check "privileged can mint invites" \
+    "$(curl -s -o /dev/null -w '%{http_code}' -b "$CASEJAR" -X POST "$BASE/api/invites")" "200"
+check "but still cannot reach the panel" \
+    "$(curl -s -o /dev/null -w '%{http_code}' -b "$CASEJAR" "$BASE/api/admin/users")" "403"
 check "bogus role rejected" \
     "$(curl -s -o /dev/null -w '%{http_code}' -b "$JAR" -X POST "$BASE/api/admin/users/$MIXED/role" \
        -H 'Content-Type: application/json' -d '{"role":"superuser"}')" "400"
@@ -153,12 +155,16 @@ check "cannot disable yourself" \
 check "cannot delete yourself" \
     "$(curl -s -o /dev/null -w '%{http_code}' -b "$JAR" -X DELETE "$BASE/api/admin/users/$MYID")" "409"
 
+# Back to an ordinary member for the checks below.
+curl -s -o /dev/null -b "$JAR" -X POST "$BASE/api/admin/users/$MIXED/role" \
+    -H 'Content-Type: application/json' -d '{"role":"user"}'
+
 echo
-echo "=== invites are admin-only ==="
-# mixedcase joined by invite, so it is an ordinary member, not an administrator.
+echo "=== invites need privileged or above ==="
+# mixedcase was demoted back to plain user below, so this is an ordinary member.
 check "member cannot mint an invite" \
     "$(curl -s -o /dev/null -w '%{http_code}' -b "$CASEJAR" -X POST "$BASE/api/invites")" "403"
-check "administrator can" \
+check "administrator can too" \
     "$(curl -s -o /dev/null -w '%{http_code}' -b "$JAR" -X POST "$BASE/api/invites")" "200"
 check "anonymous is still 401, not 403" \
     "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/invites")" "401"

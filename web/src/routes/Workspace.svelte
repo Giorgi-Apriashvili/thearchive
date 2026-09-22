@@ -231,8 +231,10 @@
     <div class="flex items-center gap-4 text-xs">
       <!-- Minting is admin-only server-side; showing the button to everyone would just
            offer a 403. -->
-      {#if me.role === 'admin'}
+      {#if me.role !== 'user'}
         <button class="text-ink-500 hover:text-ink-300" onclick={makeInvite}>Invite</button>
+      {/if}
+      {#if me.role === 'admin'}
         <a href="/admin" onclick={(e) => link(e, '/admin')} class="text-ink-500 hover:text-ink-300">
           Control panel
         </a>
