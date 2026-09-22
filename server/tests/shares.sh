@@ -68,7 +68,7 @@ WANT=$(sha256sum "$WORK/night.bin" | cut -d' ' -f1)
 echo "=== share creation ==="
 U1=$(upload "$WORK/night.bin")
 resp=$(curl -s -b "$JAR" -X POST "$BASE/api/shares" -H 'Content-Type: application/json' \
-    -d "{\"uploads\":[\"$U1\"],\"title\":\"Saturday\",\"expires_days\":30}")
+    -d "{\"uploads\":[\"$U1\"],\"title\":\"Saturday\",\"expires_days\":30,\"public\":true}")
 TOK=$(printf '%s' "$resp" | jget token)
 [ -n "$TOK" ] && ok "share created" || bad "share created" "$resp"
 check "url uses ARCHIVE_PUBLIC_URL" "$(printf '%s' "$resp" | jget url)" \
@@ -128,7 +128,7 @@ echo
 echo "=== deduplication across shares ==="
 U2=$(upload "$WORK/night.bin")
 TOK2=$(curl -s -b "$JAR" -X POST "$BASE/api/shares" -H 'Content-Type: application/json' \
-    -d "{\"uploads\":[\"$U2\"]}" | jget token)
+    -d "{\"uploads\":[\"$U2\"],\"public\":true}" | jget token)
 check "still one blob on disk" "$(find "$DATA/blobs" -type f | wc -l)" "1"
 check "refcount is now two" "$(sql 'SELECT refcount FROM blobs;')" "2"
 
@@ -149,7 +149,7 @@ echo
 echo "=== password and download limits ==="
 U3=$(upload "$WORK/night.bin")
 TOK3=$(curl -s -b "$JAR" -X POST "$BASE/api/shares" -H 'Content-Type: application/json' \
-    -d "{\"uploads\":[\"$U3\"],\"password\":\"night-out-2026\",\"max_downloads\":1}" | jget token)
+    -d "{\"uploads\":[\"$U3\"],\"password\":\"night-out-2026\",\"max_downloads\":1,\"public\":true}" | jget token)
 FID3=$(curl -s "$BASE/api/shares/$TOK3" -H 'X-Share-Password: night-out-2026' | jfile 0)
 
 check "metadata needs the password" \
@@ -191,7 +191,7 @@ head -c 65536 /dev/urandom > "$WORK/solo.bin"
 SOLO=$(sha256sum "$WORK/solo.bin" | cut -d' ' -f1)
 U5=$(upload "$WORK/solo.bin")
 TOK5=$(curl -s -b "$JAR" -X POST "$BASE/api/shares" -H 'Content-Type: application/json' \
-    -d "{\"uploads\":[\"$U5\"],\"title\":\"Solo\"}" | jget token)
+    -d "{\"uploads\":[\"$U5\"],\"title\":\"Solo\",\"public\":true}" | jget token)
 SOLO_PATH="$DATA/blobs/${SOLO:0:2}/${SOLO:2:2}/$SOLO"
 [ -f "$SOLO_PATH" ] && ok "solo blob stored" || bad "solo blob stored" "missing"
 
@@ -205,6 +205,38 @@ gcwait
 check "its row is gone too" "$(sql "SELECT COUNT(*) FROM blobs WHERE sha256='$SOLO';")" "0"
 
 echo
+echo "=== private by default ==="
+UPV=$(upload "$WORK/night.bin")
+respv=$(curl -s -b "$JAR" -X POST "$BASE/api/shares" -H 'Content-Type: application/json' \
+    -d "{\"uploads\":[\"$UPV\"],\"title\":\"Members only\"}")
+TOKV=$(printf '%s' "$respv" | jget token)
+check "defaults to private" "$(printf '%s' "$respv" | jget visibility)" "private"
+check "anonymous cannot read metadata" \
+    "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/shares/$TOKV")" "401"
+check "and is told why, not just refused" \
+    "$(curl -s "$BASE/api/shares/$TOKV" | jget reason)" "members_only"
+check "a signed-in member can" \
+    "$(curl -s -o /dev/null -w '%{http_code}' -b "$JAR" "$BASE/api/shares/$TOKV")" "200"
+
+VFID=$(curl -s -b "$JAR" "$BASE/api/shares/$TOKV" | jfile 0)
+check "download blocked anonymously" \
+    "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/d/$TOKV/$VFID")" "401"
+check "zip blocked anonymously" \
+    "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/d/$TOKV/all.zip")" "401"
+check "preview blocked anonymously" \
+    "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/d/$TOKV/$VFID/thumb")" "401"
+check "inline blocked anonymously" \
+    "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/d/$TOKV/$VFID/inline")" "401"
+check "download works for a member" \
+    "$(curl -s -o /dev/null -w '%{http_code}' -b "$JAR" "$BASE/d/$TOKV/$VFID")" "200"
+
+UPW=$(upload "$WORK/night.bin")
+TOKW=$(curl -s -b "$JAR" -X POST "$BASE/api/shares" -H 'Content-Type: application/json' \
+    -d "{\"uploads\":[\"$UPW\"],\"public\":true}" | jget token)
+check "opting out gives a public link" \
+    "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/shares/$TOKW")" "200"
+
+echo
 echo "=== image previews ==="
 # A real JPEG via the vips CLI, which ships with the library the server links anyway.
 vips black "$WORK/shot.jpg" 1200 900 2>/dev/null
@@ -214,7 +246,7 @@ UP1=$(upload "$WORK/shot.jpg")
 head -c 40000 /dev/urandom > "$WORK/doc.bin"
 UP2=$(upload "$WORK/doc.bin")
 TOKP=$(curl -s -b "$JAR" -X POST "$BASE/api/shares" -H 'Content-Type: application/json' \
-    -d "{\"uploads\":[\"$UP1\",\"$UP2\"],\"title\":\"Previews\"}" | jget token)
+    -d "{\"uploads\":[\"$UP1\",\"$UP2\"],\"title\":\"Previews\",\"public\":true}" | jget token)
 
 meta=$(curl -s "$BASE/api/shares/$TOKP")
 check "image marked previewable" "$(printf '%s' "$meta" | python3 -c "import sys,json;print(json.load(sys.stdin)['files'][0].get('preview',''))")" "image"
@@ -294,7 +326,7 @@ cp "$WORK/z/photo.jpg" "$WORK/z/first-photo.jpg"
 head -c 55000 /dev/urandom > "$WORK/z/photo.jpg"
 UZ3=$(upload "$WORK/z/photo.jpg")
 TOKZ=$(curl -s -b "$JAR" -X POST "$BASE/api/shares" -H 'Content-Type: application/json' \
-    -d "{\"uploads\":[\"$UZ1\",\"$UZ2\",\"$UZ3\"],\"title\":\"Night Out!\"}" | jget token)
+    -d "{\"uploads\":[\"$UZ1\",\"$UZ2\",\"$UZ3\"],\"title\":\"Night Out!\",\"public\":true}" | jget token)
 
 hdrs=$(curl -s -D - -o "$WORK/all.zip" "$BASE/d/$TOKZ/all.zip")
 check "zip served" "$(printf '%s' "$hdrs" | head -1 | tr -d '\r' | awk '{print $2}')" "200"
@@ -363,7 +395,7 @@ head -c 49152 /dev/urandom > "$WORK/b.bin"
 A=$(sha256sum "$WORK/a.bin" | cut -d' ' -f1)
 UA=$(upload "$WORK/a.bin"); UB=$(upload "$WORK/b.bin")
 TOK6=$(curl -s -b "$JAR" -X POST "$BASE/api/shares" -H 'Content-Type: application/json' \
-    -d "{\"uploads\":[\"$UA\",\"$UB\"],\"title\":\"Pair\",\"password\":\"hunter2\"}" | jget token)
+    -d "{\"uploads\":[\"$UA\",\"$UB\"],\"title\":\"Pair\",\"password\":\"hunter2\",\"public\":true}" | jget token)
 
 # The owner is exempt from their own share password.
 detail=$(curl -s -b "$JAR" "$BASE/api/shares/$TOK6")
@@ -395,7 +427,7 @@ echo "=== garbage collection ==="
 gcwait
 NIGHT_PATH="$DATA/blobs/${WANT:0:2}/${WANT:2:2}/$WANT"
 check "revoked share released its reference" \
-    "$(sql "SELECT refcount FROM blobs WHERE sha256='$WANT';")" "2"
+    "$(sql "SELECT refcount FROM blobs WHERE sha256='$WANT';")" "4"
 [ -f "$NIGHT_PATH" ] && ok "blob survives while still referenced" \
     || bad "blob survives while still referenced" "deleted early"
 
@@ -417,7 +449,7 @@ check "refcount drained" "$(sql 'SELECT COALESCE(SUM(refcount),0) FROM blobs;')"
 check "expired link 404s" "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/shares/$TOK")" "404"
 check "blob row deleted" "$(sql 'SELECT COUNT(*) FROM blobs;')" "0"
 check "blob file deleted" "$(find "$DATA/blobs" -type f | wc -l)" "0"
-check "share records kept for history" "$(sql 'SELECT COUNT(*) FROM shares;')" "7"
+check "share records kept for history" "$(sql 'SELECT COUNT(*) FROM shares;')" "9"
 check "incoming left clean" "$(find "$DATA/incoming" -type f | wc -l)" "0"
 
 echo

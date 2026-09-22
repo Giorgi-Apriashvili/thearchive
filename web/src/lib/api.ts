@@ -5,6 +5,9 @@ export class ApiError extends Error {
   constructor(
     public status: number,
     message: string,
+    /** Machine-readable discriminator, where the status alone is ambiguous — a 401 may
+     *  mean "needs a password" or "members only". */
+    public reason?: string,
   ) {
     super(message)
   }
@@ -28,7 +31,11 @@ async function request<T>(method: string, path: string, body?: unknown, headers:
   }
 
   if (!response.ok) {
-    throw new ApiError(response.status, payload?.error ?? `request failed (${response.status})`)
+    throw new ApiError(
+      response.status,
+      payload?.error ?? `request failed (${response.status})`,
+      payload?.reason,
+    )
   }
   return payload as T
 }
@@ -59,6 +66,7 @@ export interface ShareFile {
 
 export interface ShareDetail {
   token: string
+  visibility: 'private' | 'public' 
   title: string
   created_at: number
   expires_at: number
@@ -76,6 +84,7 @@ export interface ShareSummary {
   download_count: number
   max_downloads?: number
   password_protected: boolean
+  visibility: 'private' | 'public' 
   file_count: number
   total_bytes: number
 }
@@ -98,6 +107,7 @@ export interface StorageInfo {
 export interface CreatedShare {
   token: string
   url: string
+  visibility: 'private' | 'public' 
   expires_at: number
   file_count: number
   total_bytes: number

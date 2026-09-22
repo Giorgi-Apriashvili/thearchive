@@ -83,7 +83,7 @@ blobs(sha256 PK, size, refcount, created_at,
 
 shares(id, token UNIQUE, owner_id, title, created_at, expires_at,
        password_hash NULL, max_downloads NULL, download_count,
-       deleted_at, released_at)
+       deleted_at, released_at, visibility)              -- private | public
 
 share_files(id, share_id, blob_sha256, filename, content_type, size,
             uploaded_by, client_mtime, relative_path)
@@ -282,6 +282,30 @@ nosniff`, and any type a browser might execute in our origin is downgraded to
 `application/octet-stream`. Range requests are honoured, so large downloads resume and
 video seeks work — Drogon's `newFileResponse` does not parse `Range` itself, so the
 handler computes the byte window and passes explicit offset/length.
+
+## Who can open a link
+
+Shares are **private by default**: only a signed-in member can read the metadata,
+download, preview or fetch the archive. Unticking "private" at creation makes the link
+work for anyone who holds it, which is what every share did before this existed.
+
+The default is that way round deliberately. Publishing to the whole internet should be
+something you chose, not something you got by not noticing a checkbox.
+
+All five public entry points — metadata, download, thumbnail, inline and the zip — go
+through one `authoriseShare` gate that checks existence, then visibility, then the
+password. A check spread across five handlers is a check that will eventually be missing
+from one of them. The owner and admins bypass the password, since one set it and the
+other can already reach everything.
+
+A members-only refusal and a password-required refusal are both `401` — signing in
+genuinely resolves the former, so `403` would misdescribe it. They are distinguished by
+a `reason` field on the error body rather than by matching on prose, which lets the
+download page offer a sign-in prompt instead of a password box that could never work.
+
+**Existing shares were migrated to `public`.** They were created under link-is-enough
+semantics and handed to people who may have no account; silently tightening them would
+have broken links already in circulation.
 
 ## Roles and the control panel
 

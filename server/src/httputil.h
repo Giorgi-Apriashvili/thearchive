@@ -13,12 +13,19 @@ namespace archive {
 // below turns it into a JSON body, which keeps the happy path free of error plumbing.
 class HttpError : public std::runtime_error {
 public:
-    HttpError(int status, const std::string& message)
-        : std::runtime_error(message), status_(status) {}
+    HttpError(int status, const std::string& message, std::string reason = {})
+        : std::runtime_error(message), status_(status), reason_(std::move(reason)) {}
+
     int status() const { return status_; }
+
+    // Optional machine-readable discriminator. Two different 401s — "this link needs a
+    // password" and "this link is members only" — need different handling in the client,
+    // and it should not be matching on prose.
+    const std::string& reason() const { return reason_; }
 
 private:
     int status_;
+    std::string reason_;
 };
 
 // Unix epoch seconds — the unit every timestamp column in the schema uses.
@@ -28,9 +35,13 @@ inline std::int64_t nowSeconds() {
         .count();
 }
 
-inline drogon::HttpResponsePtr jsonError(int status, const std::string& message) {
+inline drogon::HttpResponsePtr jsonError(int status, const std::string& message,
+                                        const std::string& reason = {}) {
     Json::Value body;
     body["error"] = message;
+    if (!reason.empty()) {
+        body["reason"] = reason;
+    }
     auto resp = drogon::HttpResponse::newHttpJsonResponse(body);
     resp->setStatusCode(static_cast<drogon::HttpStatusCode>(status));
     return resp;
@@ -43,7 +54,7 @@ drogon::HttpResponsePtr guarded(Fn&& fn) {
     try {
         return fn();
     } catch (const HttpError& e) {
-        return jsonError(e.status(), e.what());
+        return jsonError(e.status(), e.what(), e.reason());
     } catch (const std::exception& e) {
         LOG_ERROR << "unhandled: " << e.what();
         return jsonError(500, "internal error");

@@ -176,7 +176,18 @@ ALTER TABLE users DROP COLUMN is_admin;
 ALTER TABLE users ADD COLUMN disabled_at INTEGER;
 )SQL";
 
-constexpr std::array<Migration, 8> kMigrations{{
+// Who may open a link. New shares default to `private` — only signed-in members — and
+// the column default reflects that.
+//
+// Existing rows are explicitly set `public`: they were created under link-is-enough
+// semantics and handed to people who may have no account. Silently tightening them
+// would break links already in circulation, which is not a migration's job.
+constexpr const char* kSchemaV9 = R"SQL(
+ALTER TABLE shares ADD COLUMN visibility TEXT NOT NULL DEFAULT 'private';
+UPDATE shares SET visibility = 'public';
+)SQL";
+
+constexpr std::array<Migration, 9> kMigrations{{
     {1, kSchemaV1},
     {2, kSchemaV2},
     {3, kSchemaV3},
@@ -185,6 +196,7 @@ constexpr std::array<Migration, 8> kMigrations{{
     {6, kSchemaV6},
     {7, kSchemaV7},
     {8, kSchemaV8},
+    {9, kSchemaV9},
 }};
 
 }  // namespace
