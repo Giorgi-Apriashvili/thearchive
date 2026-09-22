@@ -130,14 +130,12 @@ int deleteOrphanBlobs(Database& db, const fs::path& dataDir, std::int64_t now,
             continue;  // something referenced it between the query and here
         }
 
-        std::error_code ec;
-        const fs::path path = storage::blobPath(dataDir, orphan.hash);
-        if (fs::remove(path, ec)) {
+        // Routed through the shared helper so thumbnails and any future derivative are
+        // reaped here too, rather than only on the explicit-delete path.
+        if (fs::exists(storage::blobPath(dataDir, orphan.hash))) {
             bytesReclaimed += orphan.size;
         }
-        // Prune the fan-out directories once empty, ignoring the "not empty" error.
-        fs::remove(path.parent_path(), ec);
-        fs::remove(path.parent_path().parent_path(), ec);
+        storage::removeBlobFiles(db, dataDir, orphan.hash);
         ++deleted;
     }
     return deleted;

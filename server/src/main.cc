@@ -11,6 +11,7 @@
 #include "gc.h"
 #include "shares.h"
 #include "storage.h"
+#include "thumbnail.h"
 #include "tus.h"
 
 namespace {
@@ -27,12 +28,13 @@ std::string envOr(const char* key, const std::string& fallback) {
 
 }  // namespace
 
-int main() {
+int main(int, char** argv) {
     // stdout is block-buffered whenever it is not a terminal, which is exactly the case
     // under systemd, under Docker, and behind any log redirect — so a long-running
     // server appears to produce no logs at all until it exits. Line buffering costs
     // nothing at this volume and makes `docker logs` and `tail -f` behave.
     std::setvbuf(stdout, nullptr, _IOLBF, 0);
+    archive::thumbnail::startup(argv[0]);
 
     try {
         // Config comes from the environment rather than Drogon's config.json so the
@@ -133,6 +135,7 @@ int main() {
             .setThreadNum(0)  // one event loop per hardware thread
             .run();
 
+        archive::thumbnail::shutdown();
         return 0;
     } catch (const std::exception& e) {
         // Startup failures must be loud: a container that stays up with a broken

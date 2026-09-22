@@ -30,6 +30,9 @@ setup_arch() {
   $SUDO pacman -S --noconfirm --needed \
     base-devel cmake ninja git curl \
     jsoncpp openssl zlib sqlite argon2 brotli \
+    libvips libheif \
+    `# libheif is an *optional* dependency of libvips on Arch, so HEIC decode is` \
+    `# silently absent without it — Debian's libvips42 depends on it directly.` \
     nodejs npm
 }
 
@@ -41,7 +44,7 @@ setup_debian() {
   $SUDO apt-get install -y --no-install-recommends \
     build-essential cmake ninja-build pkg-config git curl ca-certificates \
     libjsoncpp-dev uuid-dev zlib1g-dev libssl-dev libsqlite3-dev \
-    libargon2-dev libbrotli-dev sqlite3
+    libargon2-dev libbrotli-dev libvips-dev sqlite3
 
   echo "==> Installing Node.js 22 (frontend build only)"
   if ! command -v node >/dev/null 2>&1; then

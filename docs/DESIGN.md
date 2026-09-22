@@ -267,12 +267,37 @@ Two host-level details are worth planning around rather than discovering:
 | `GET` | `/api/storage` | usage and free space |
 | `GET` | `/api/shares/{token}` | share metadata (public) |
 | `GET` | `/d/{token}/{fileId}` | the bytes (public) |
+| `GET` | `/d/{token}/{fileId}/thumb?s=sm\|lg` | rendered preview, `inline` (public) |
+| `GET` | `/d/{token}/{fileId}/inline` | the original served `inline`, for `<video>` (public) |
 
 Downloads are always `Content-Disposition: attachment` with `X-Content-Type-Options:
 nosniff`, and any type a browser might execute in our origin is downgraded to
 `application/octet-stream`. Range requests are honoured, so large downloads resume and
 video seeks work — Drogon's `newFileResponse` does not parse `Range` itself, so the
 handler computes the byte window and passes explicit offset/length.
+
+## Previews
+
+Images are thumbnailed at upload with libvips, which shrinks during decode rather than
+loading the full raster, and applies the EXIF orientation tag — without which portrait
+phone photos arrive on their side. Two sizes: 320px for the list rows, 1600px for the
+viewer. Roughly 175 KB per image against an 8 MB original.
+
+libvips also brings HEIC and AVIF decode. That is not a nicety: browsers cannot render
+HEIC at all, so an iPhone upload would otherwise be invisible to everyone who received
+the link.
+
+**Previews never increment `download_count`.** Browsing a gallery of forty photos would
+otherwise exhaust a share's `max_downloads` before the recipient downloaded anything —
+the same reasoning that already exempts ranged requests.
+
+`/inline` is the only endpoint that serves user content without `attachment`, so it uses
+an explicit **allowlist** of types rather than `mime::isRiskyToRender`'s denylist: a type
+nobody anticipated is refused rather than executed in our origin.
+
+Thumbnails are derived state, which makes them easy to leak. Both deletion paths — the
+expiry sweep and explicit removal — route through `storage::removeBlobFiles`, the single
+place that knows what a blob owns on disk.
 
 ## Deliberately deferred
 
@@ -281,5 +306,4 @@ handler computes the byte window and passes explicit offset/length.
 - **Per-user quota.** `users.quota_bytes` exists and nothing enforces it.
 - **EXIF extraction.** `client_mtime` gives a usable timestamp today; capture time,
   camera and orientation would need libexif and matter mainly to an archival mode.
-- Thumbnails / previews on the download page.
 - Email. Invites are codes you paste into a chat; no SMTP anywhere.

@@ -205,6 +205,69 @@ gcwait
 check "its row is gone too" "$(sql "SELECT COUNT(*) FROM blobs WHERE sha256='$SOLO';")" "0"
 
 echo
+echo "=== image previews ==="
+# A real JPEG via the vips CLI, which ships with the library the server links anyway.
+vips black "$WORK/shot.jpg" 1200 900 2>/dev/null
+UP1=$(upload "$WORK/shot.jpg")
+# Its own non-image file rather than reusing night.bin, so this section does not
+# perturb the refcounts the garbage-collection checks below depend on.
+head -c 40000 /dev/urandom > "$WORK/doc.bin"
+UP2=$(upload "$WORK/doc.bin")
+TOKP=$(curl -s -b "$JAR" -X POST "$BASE/api/shares" -H 'Content-Type: application/json' \
+    -d "{\"uploads\":[\"$UP1\",\"$UP2\"],\"title\":\"Previews\"}" | jget token)
+
+meta=$(curl -s "$BASE/api/shares/$TOKP")
+check "image marked previewable" "$(printf '%s' "$meta" | python3 -c "import sys,json;print(json.load(sys.stdin)['files'][0].get('preview',''))")" "image"
+check "non-image has no preview" "$(printf '%s' "$meta" | python3 -c "import sys,json;print(json.load(sys.stdin)['files'][1].get('preview',''))")" ""
+check "thumb recorded in the db" "$(sql "SELECT thumb FROM blobs WHERE thumb=1;")" "1"
+check "both sizes on disk" "$(find "$DATA/thumbs" -name '*.webp' | wc -l)" "2"
+
+PFID=$(printf '%s' "$meta" | jfile 0)
+NFID=$(printf '%s' "$meta" | jfile 1)
+
+h=$(curl -s -D - -o "$WORK/lg.webp" "$BASE/d/$TOKP/$PFID/thumb")
+check "thumb served" "$(printf '%s' "$h" | head -1 | tr -d '\r' | awk '{print $2}')" "200"
+check "served as webp" "$(printf '%s' "$h" | hdr Content-Type)" "image/webp"
+check "served inline, not attachment" "$(printf '%s' "$h" | hdr Content-Disposition)" "inline"
+printf '%s' "$h" | grep -qi 'x-content-type-options: nosniff' && ok "thumb sets nosniff" \
+    || bad "thumb sets nosniff" "absent"
+check "it really is a webp" "$(head -c 12 "$WORK/lg.webp" | tail -c 4)" "WEBP"
+
+curl -s -o "$WORK/sm.webp" "$BASE/d/$TOKP/$PFID/thumb?s=sm"
+[ "$(stat -c%s "$WORK/sm.webp")" -lt "$(stat -c%s "$WORK/lg.webp")" ] \
+    && ok "sm is smaller than lg" || bad "sm is smaller than lg" "sm >= lg"
+
+# The regression this feature most plausibly introduces: browsing a gallery must not
+# consume the share's download allowance.
+for _ in 1 2 3 4 5; do curl -s -o /dev/null "$BASE/d/$TOKP/$PFID/thumb"; done
+curl -s -o /dev/null "$BASE/d/$TOKP/$PFID/inline"
+check "previews do not count as downloads" \
+    "$(sql "SELECT download_count FROM shares WHERE token='$TOKP';")" "0"
+
+check "no thumb for a non-image" \
+    "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/d/$TOKP/$NFID/thumb")" "404"
+check "inline refuses a disallowed type" \
+    "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/d/$TOKP/$NFID/inline")" "415"
+check "inline serves an allowed image" \
+    "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/d/$TOKP/$PFID/inline")" "200"
+check "previews respect the share password" \
+    "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/d/$TOK3/1/thumb")" "401"
+
+# Backfill: clear the recorded state as though the blob predated the column.
+SHOT=$(sql "SELECT sha256 FROM blobs WHERE thumb=1;")
+sql "UPDATE blobs SET thumb=0 WHERE sha256='$SHOT';"
+find "$DATA/thumbs" -name "$SHOT*" -delete
+check "backfills on first request" \
+    "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/d/$TOKP/$PFID/thumb")" "200"
+check "and records it" "$(sql "SELECT thumb FROM blobs WHERE sha256='$SHOT';")" "1"
+
+# Thumbnails are derived state: they must be reaped with the blob, by both paths.
+curl -s -o /dev/null -b "$JAR" -X DELETE "$BASE/api/shares/$TOKP/files/$PFID"
+[ -z "$(find "$DATA/thumbs" -name "$SHOT*" 2>/dev/null)" ] \
+    && ok "thumbnails removed with their blob" \
+    || bad "thumbnails removed with their blob" "$(find "$DATA/thumbs" -name "$SHOT*")"
+
+echo
 echo "=== download all as a streaming zip ==="
 # Two files sharing a name, so the writer has to disambiguate rather than let one
 # silently overwrite the other on extraction.
@@ -341,7 +404,7 @@ check "refcount drained" "$(sql 'SELECT COALESCE(SUM(refcount),0) FROM blobs;')"
 check "expired link 404s" "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/shares/$TOK")" "404"
 check "blob row deleted" "$(sql 'SELECT COUNT(*) FROM blobs;')" "0"
 check "blob file deleted" "$(find "$DATA/blobs" -type f | wc -l)" "0"
-check "share records kept for history" "$(sql 'SELECT COUNT(*) FROM shares;')" "6"
+check "share records kept for history" "$(sql 'SELECT COUNT(*) FROM shares;')" "7"
 check "incoming left clean" "$(find "$DATA/incoming" -type f | wc -l)" "0"
 
 echo

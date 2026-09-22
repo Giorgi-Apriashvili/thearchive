@@ -46,6 +46,9 @@ export interface Me {
 
 export interface ShareFile {
   id: number
+  /** Present only when there is something to show: a rendered thumbnail, or a
+   *  browser-playable video. Absent means the row gets no preview affordance. */
+  preview?: 'image' | 'video' 
   filename: string
   size: number
   content_type: string
