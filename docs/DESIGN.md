@@ -303,6 +303,17 @@ genuinely resolves the former, so `403` would misdescribe it. They are distingui
 a `reason` field on the error body rather than by matching on prose, which lets the
 download page offer a sign-in prompt instead of a password box that could never work.
 
+Visibility is changeable after the fact, by the owner (`PATCH /api/shares/{token}`) or an
+admin (`PATCH /api/admin/shares/{token}`), rather than requiring the link be destroyed
+and re-sent. The value is validated against exactly `private` or `public` rather than
+stored as given: `authoriseShare` treats anything that is not `"public"` as private, so
+an unexpected value would fail closed — safely, but silently, leaving an owner believing
+they had published something they had not.
+
+**Making a share private is not a recall.** It stops future requests; it does not undo
+downloads already taken, and a preview already fetched may sit in the recipient's browser
+cache for up to an hour. The confirmation says so.
+
 **Existing shares were migrated to `public`.** They were created under link-is-enough
 semantics and handed to people who may have no account; silently tightening them would
 have broken links already in circulation.

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { api, ApiError } from '../../lib/api'
   import { bytes, until } from '../../lib/format'
+  import VisibilityToggle from '../../lib/VisibilityToggle.svelte'
 
   interface AdminShare {
     token: string
@@ -10,6 +11,8 @@
     expires_at: number
     download_count: number
     password_protected: boolean
+    visibility: 'private' | 'public'
+    url: string
     file_count: number
     total_bytes: number
   }
@@ -54,10 +57,22 @@
           {#if share.password_protected}· password{/if}
         </p>
       </div>
-      <button
-        onclick={() => revoke(share.token)}
-        class="shrink-0 text-xs text-ink-500 hover:text-red-400">Revoke</button
-      >
+      <div class="flex shrink-0 items-center gap-3">
+        <a href={`/d/${share.token}`} class="text-xs text-ink-500 hover:text-ink-300">Open</a>
+        <button
+          class="text-xs text-ink-500 hover:text-ink-300"
+          onclick={() => navigator.clipboard.writeText(share.url)}>Copy</button
+        >
+        <VisibilityToggle
+          visibility={share.visibility}
+          endpoint={`/api/admin/shares/${share.token}`}
+          onChanged={(next) => (share.visibility = next)}
+        />
+        <button
+          onclick={() => revoke(share.token)}
+          class="text-xs text-ink-500 hover:text-red-400">Revoke</button
+        >
+      </div>
     </li>
   {:else}
     <li class="px-4 py-3 text-sm text-ink-500">No live shares.</li>

@@ -2,6 +2,7 @@
   import { api, ApiError } from '../../lib/api'
   import { bytes, shortDate, until } from '../../lib/format'
   import { router, link } from '../../lib/router.svelte'
+  import VisibilityToggle from '../../lib/VisibilityToggle.svelte'
 
   let { id }: { id: string } = $props()
 
@@ -13,6 +14,8 @@
     download_count: number
     revoked: boolean
     password_protected: boolean
+    visibility: 'private' | 'public'
+    url: string
     file_count: number
     total_bytes: number
   }
@@ -72,6 +75,11 @@
   }
 
   const roles = ['user', 'privileged', 'admin'] as const
+
+  async function revokeShare(token: string) {
+    await api.del(`/api/admin/shares/${token}`)
+    await load()
+  }
 </script>
 
 <a
@@ -196,10 +204,22 @@
               </p>
             </div>
             {#if !share.revoked}
-              <a
-                href={`/d/${share.token}`}
-                class="shrink-0 text-xs text-ink-500 hover:text-accent">Open</a
-              >
+              <div class="flex shrink-0 items-center gap-3">
+                <a href={`/d/${share.token}`} class="text-xs text-ink-500 hover:text-ink-300">Open</a>
+                <button
+                  class="text-xs text-ink-500 hover:text-ink-300"
+                  onclick={() => navigator.clipboard.writeText(share.url)}>Copy</button
+                >
+                <VisibilityToggle
+                  visibility={share.visibility}
+                  endpoint={`/api/admin/shares/${share.token}`}
+                  onChanged={(next) => (share.visibility = next)}
+                />
+                <button
+                  onclick={() => revokeShare(share.token)}
+                  class="text-xs text-ink-500 hover:text-red-400">Revoke</button
+                >
+              </div>
             {/if}
           </li>
         {/each}
