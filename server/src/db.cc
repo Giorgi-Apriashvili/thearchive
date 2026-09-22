@@ -247,7 +247,27 @@ CREATE TABLE user_blocks (
 );
 )SQL";
 
-constexpr std::array<Migration, 10> kMigrations{{
+// Who a message named with @. Resolved once, at send time, against the room's membership
+// — not re-parsed from the body on every read. A mention is then a fact the server
+// holds rather than a guess the client makes, which is what a notifier will need, and it
+// means an @name typed before someone joined does not silently become a mention later.
+//
+// `user_id` drops to NULL when an account goes, exactly as messages.user_id does, and
+// `mentioned_name` keeps the rendering stable afterwards. A notifier reads the rows with
+// a live user_id and ignores the rest; there is nobody left to notify.
+constexpr const char* kSchemaV11 = R"SQL(
+CREATE TABLE message_mentions (
+    message_id     INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    user_id        INTEGER          REFERENCES users(id) ON DELETE SET NULL,
+    mentioned_name TEXT    NOT NULL,     -- snapshot; survives the account
+    PRIMARY KEY (message_id, mentioned_name)
+);
+-- "What has named me that I have not read", per user. The notifier's query, and the
+-- per-room mention badge's.
+CREATE INDEX idx_mentions_user ON message_mentions(user_id, message_id);
+)SQL";
+
+constexpr std::array<Migration, 11> kMigrations{{
     {1, kSchemaV1},
     {2, kSchemaV2},
     {3, kSchemaV3},
@@ -258,6 +278,7 @@ constexpr std::array<Migration, 10> kMigrations{{
     {8, kSchemaV8},
     {9, kSchemaV9},
     {10, kSchemaV10},
+    {11, kSchemaV11},
 }};
 
 }  // namespace

@@ -78,7 +78,7 @@ ARCHIVE_SECURE_COOKIES=0 ARCHIVE_DATA_DIR="$DATA" ARCHIVE_PORT=$PORT \
 PID=$!
 for _ in $(seq 1 60); do curl -sf "$BASE/healthz" >/dev/null 2>&1 && break; sleep 0.25; done
 
-check "schema migrated to v10" "$(curl -s "$BASE/healthz" | jf schema)" "10"
+check "schema migrated to v11" "$(curl -s "$BASE/healthz" | jf schema)" "11"
 
 curl -s -o /dev/null -c "$ALICE" -X POST "$BASE/api/auth/bootstrap" \
     -H 'Content-Type: application/json' \
@@ -222,6 +222,74 @@ check "the body is replaced by a tombstone, and the gap is not closed" \
     "made it|who is bringing the tent|[removed by alice]|"
 check "the text is no longer served" \
     "$(as "$BOB" GET "/api/chat/rooms/$ROOM/messages" | grep -c '"i am"')" "0"
+
+echo
+echo "=== the member list ==="
+# Who is in the room, for the header's "N members" and for the composer's @ autocomplete.
+check "members are listed" \
+    "$(as "$BOB" GET "/api/chat/rooms/$ROOM/members" \
+       | py "import sys,json;print(','.join(sorted(m['username'] for m in json.load(sys.stdin)['members'])))")" \
+    "alice,bob"
+check "the creator is marked" \
+    "$(as "$BOB" GET "/api/chat/rooms/$ROOM/members" \
+       | py "import sys,json;print(','.join(m['username'] for m in json.load(sys.stdin)['members'] if m['is_creator']))")" \
+    "alice"
+check "a non-member cannot see who is in the room" \
+    "$(code "$DAVE" GET "/api/chat/rooms/$ROOM/members")" "404"
+# An outstanding invitation is worth showing — it stops the creator re-inviting someone
+# who simply has not answered yet.
+as "$ALICE" POST "/api/chat/rooms/$ROOM/invite" '{"username":"dave"}' >/dev/null
+check "a pending invitation is listed separately" \
+    "$(as "$BOB" GET "/api/chat/rooms/$ROOM/members" \
+       | py "import sys,json;print(','.join(m['username'] for m in json.load(sys.stdin)['invited']))")" \
+    "dave"
+check "and is not counted as a member" \
+    "$(as "$BOB" GET "/api/chat/rooms/$ROOM/members" \
+       | py "import sys,json;print(len(json.load(sys.stdin)['members']))")" "2"
+# Whether someone turned an invitation down is their business, not a status the room
+# displays about them.
+as "$DAVE" POST "/api/chat/rooms/$ROOM/respond" '{"action":"decline"}' >/dev/null
+check "a decline is shown to nobody" \
+    "$(as "$BOB" GET "/api/chat/rooms/$ROOM/members" \
+       | py "import sys,json;d=json.load(sys.stdin);print(len(d['members']),len(d['invited']))")" \
+    "2 0"
+
+echo
+echo "=== @mentions ==="
+MM=$(as "$ALICE" POST "/api/chat/rooms/$ROOM/messages" '{"body":"@bob can you bring the tent"}' | jf id)
+check "the mention is resolved and stored" \
+    "$(sql "SELECT mentioned_name FROM message_mentions WHERE message_id = $MM;")" "bob"
+check "and reported to the client" \
+    "$(as "$BOB" GET "/api/chat/rooms/$ROOM/messages?since=$((MM-1))" \
+       | py "import sys,json;print(','.join(json.load(sys.stdin)['messages'][0]['mentions']))")" "bob"
+# Case is normalised: writing a name with a capital should not fail to reach someone.
+M=$(as "$ALICE" POST "/api/chat/rooms/$ROOM/messages" '{"body":"@Bob again"}' | jf id)
+check "a capitalised mention still resolves" \
+    "$(sql "SELECT mentioned_name FROM message_mentions WHERE message_id = $M;")" "bob"
+# A name that belongs to nobody in the room is text. Recording it would let a message
+# claim to have notified someone it never could.
+M=$(as "$ALICE" POST "/api/chat/rooms/$ROOM/messages" '{"body":"@nobody @dave hello"}' | jf id)
+check "an unresolvable name records nothing" \
+    "$(sql "SELECT COUNT(*) FROM message_mentions WHERE message_id = $M;")" "0"
+# An @ inside a word is not a mention; otherwise an email address names its mail host.
+M=$(as "$ALICE" POST "/api/chat/rooms/$ROOM/messages" '{"body":"mail me at me@bob.example"}' | jf id)
+check "an email address is not a mention" \
+    "$(sql "SELECT COUNT(*) FROM message_mentions WHERE message_id = $M;")" "0"
+M=$(as "$ALICE" POST "/api/chat/rooms/$ROOM/messages" '{"body":"@bob @bob @bob"}' | jf id)
+check "a repeated name is recorded once" \
+    "$(sql "SELECT COUNT(*) FROM message_mentions WHERE message_id = $M;")" "1"
+
+echo
+echo "=== the mention badge ==="
+check "bob has unread mentions" \
+    "$(as "$BOB" GET /api/chat/rooms | room Saturday | rf mentions_unread)" "3"
+check "alice, who wrote them, has none" \
+    "$(as "$ALICE" GET /api/chat/rooms | room Saturday | rf mentions_unread)" "0"
+LAST=$(as "$BOB" GET "/api/chat/rooms/$ROOM/messages" \
+       | py "import sys,json;print(json.load(sys.stdin)['messages'][-1]['id'])")
+as "$BOB" POST "/api/chat/rooms/$ROOM/read" "{\"last_id\":$LAST}" >/dev/null
+check "reading clears them" \
+    "$(as "$BOB" GET /api/chat/rooms | room Saturday | rf mentions_unread)" "0"
 
 echo
 echo "=== declining ==="
