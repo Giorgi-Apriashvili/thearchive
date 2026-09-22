@@ -22,7 +22,7 @@
     .catch(() => {})
 
   const heading = $derived(
-    mode === 'bootstrap' ? 'Set up TheArchive' : mode === 'redeem' ? 'Redeem an invite' : 'Sign in',
+    mode === 'bootstrap' ? 'Set up WeekendArchive' : mode === 'redeem' ? 'Redeem an invite' : 'Sign in',
   )
 
   // Distinct from the heading: a button repeating the title above it says nothing about
@@ -54,7 +54,7 @@
 
 <div class="flex min-h-screen items-center justify-center px-4">
   <div class="w-full max-w-sm">
-    <h1 class="text-2xl font-semibold tracking-tight">TheArchive</h1>
+    <h1 class="wordmark text-4xl">Weekend<em>Archive</em></h1>
     <p class="mt-1 text-sm text-ink-500">Drop files, share a link, forget about it.</p>
 
     <form class="mt-8 space-y-4" onsubmit={submit}>

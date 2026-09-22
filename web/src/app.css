@@ -1,5 +1,13 @@
 @import 'tailwindcss';
 
+/* Self-hosted rather than loaded from Google's CDN: no third-party request, no visitor
+   IPs leaving the host, and one fewer DNS + TLS handshake before first paint. Vite
+   fingerprints and bundles the woff2 files like any other asset.
+
+   Inter is the variable cut, so weights 100-900 come from a single file. */
+@import '@fontsource-variable/inter';
+@import '@fontsource/instrument-serif';
+
 @theme {
   --color-ink-950: #0b0d10;
   --color-ink-900: #121519;
@@ -10,7 +18,11 @@
   --color-ink-100: #e8edf2;
   --color-accent: #e0a458;
   --color-accent-dim: #b8823f;
-  --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
+
+  --font-sans: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
+  /* Reserved for the wordmark. A serif reads as a keepsake rather than as a product,
+     which suits somewhere you put photos of your weekends. */
+  --font-display: 'Instrument Serif', ui-serif, Georgia, serif;
 }
 
 html {
@@ -28,4 +40,18 @@ body {
    tick upward, which is otherwise very distracting during an upload. */
 .tnum {
   font-variant-numeric: tabular-nums;
+}
+
+/* The wordmark. "Weekend" recedes, "Archive" carries the accent — the same amber used
+   for every actionable thing on the site, so the name and the affordances agree. */
+.wordmark {
+  font-family: var(--font-display);
+  font-weight: 400;
+  letter-spacing: -0.015em;
+  line-height: 1.1;
+}
+
+.wordmark em {
+  font-style: italic;
+  color: var(--color-accent);
 }

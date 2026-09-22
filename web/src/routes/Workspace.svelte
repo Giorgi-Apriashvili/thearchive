@@ -224,7 +224,7 @@
 <div class="mx-auto max-w-3xl px-4 py-10">
   <header class="flex items-baseline justify-between">
     <div>
-      <h1 class="text-2xl font-semibold tracking-tight">TheArchive</h1>
+      <h1 class="wordmark text-3xl">Weekend<em>Archive</em></h1>
       <p class="mt-1 text-sm text-ink-500">Signed in as {me.username}</p>
     </div>
     <div class="flex items-center gap-4 text-xs">
@@ -251,7 +251,7 @@
         <span class="tnum text-ink-500">{bytes(disk.free)} free of {bytes(disk.total)}</span>
       </div>
 
-      <!-- Two segments: what TheArchive holds, and what else lives on the same volume.
+      <!-- Two segments: what WeekendArchive holds, and what else is on the same volume.
            Separating them makes it obvious whether a full disk is our doing. -->
       <div class="mt-2 flex h-1.5 overflow-hidden rounded bg-ink-800" title="{bytes(disk.mine)} archive, {bytes(disk.others)} other">
         <div class="h-full bg-accent" style="width: {disk.minePct}%"></div>
@@ -260,7 +260,7 @@
 
       <p class="tnum mt-2 text-xs text-ink-500">
         <span class="text-accent">■</span>
-        TheArchive {bytes(disk.mine)}
+        WeekendArchive {bytes(disk.mine)}
         {#if storage}({storage.blob_count} file{storage.blob_count === 1 ? '' : 's'}){/if}
         · <span class="text-ink-700">■</span> other {bytes(disk.others)}
         {#if disk.saved > 0}

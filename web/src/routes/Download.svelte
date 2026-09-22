@@ -53,7 +53,7 @@
 </script>
 
 <div class="mx-auto max-w-2xl px-4 py-16">
-  <a href="/" class="text-sm text-ink-500 hover:text-ink-300">TheArchive</a>
+  <a href="/" class="wordmark text-xl text-ink-300 transition hover:text-ink-100">Weekend<em>Archive</em></a>
 
   {#if loading}
     <p class="mt-10 text-sm text-ink-500">Loading…</p>
