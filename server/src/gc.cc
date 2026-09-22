@@ -9,6 +9,7 @@
 
 #include "httputil.h"
 #include "storage.h"
+#include "thumbnail.h"
 
 namespace archive {
 namespace {
@@ -178,6 +179,39 @@ int removeStrayIncoming(Database& db, const fs::path& dataDir, std::int64_t now)
     return removed;
 }
 
+// Renders previews for blobs stored before thumbnailing existed. Bounded per pass: this
+// runs on the event loop, and a few hundred milliseconds of rendering is fine while
+// stalling it for a whole backlog is not. Successive sweeps finish the rest.
+int renderMissingThumbnails(Database& db, const fs::path& dataDir) {
+    constexpr int kPerSweep = 20;
+
+    std::vector<std::pair<std::string, std::string>> pending;  // hash, content type
+    {
+        auto find = db.prepare(
+            "SELECT sha256, COALESCE(content_type, '') FROM blobs "
+            "WHERE thumb = 0 AND content_type LIKE 'image/%' LIMIT ?");
+        find.bind(1, static_cast<std::int64_t>(kPerSweep));
+        while (find.step()) {
+            pending.emplace_back(find.columnText(0), find.columnText(1));
+        }
+    }
+
+    int rendered = 0;
+    for (const auto& [hash, contentType] : pending) {
+        if (!thumbnail::isThumbnailable(contentType)) {
+            // Marked failed so it is not reconsidered on every sweep from here on.
+            auto skip = db.prepare("UPDATE blobs SET thumb = 2 WHERE sha256 = ?");
+            skip.bind(1, hash).run();
+            continue;
+        }
+        const bool ok = thumbnail::generate(storage::blobPath(dataDir, hash), dataDir, hash);
+        auto mark = db.prepare("UPDATE blobs SET thumb = ? WHERE sha256 = ?");
+        mark.bind(1, static_cast<std::int64_t>(ok ? 1 : 2)).bind(2, hash).run();
+        rendered += ok ? 1 : 0;
+    }
+    return rendered;
+}
+
 int purgeExpiredSessions(Database& db, std::int64_t now) {
     auto stmt = db.prepare("DELETE FROM sessions WHERE expires_at <= ?");
     stmt.bind(1, now).run();
@@ -198,6 +232,7 @@ GcStats runGarbageCollection(Database& db, const fs::path& dataDir) {
     stats.blobsDeleted = deleteOrphanBlobs(db, dataDir, now, stats.bytesReclaimed);
     stats.strayFilesRemoved = removeStrayIncoming(db, dataDir, now);
     stats.sessionsPurged = purgeExpiredSessions(db, now);
+    stats.thumbnailsRendered = renderMissingThumbnails(db, dataDir);
     return stats;
 }
 
@@ -210,13 +245,15 @@ void scheduleGarbageCollection(Database& db, const fs::path& dataDir) {
             try {
                 const GcStats stats = runGarbageCollection(db, dataDir);
                 if (stats.sharesReleased || stats.uploadsExpired || stats.blobsDeleted ||
-                    stats.strayFilesRemoved || stats.sessionsPurged) {
+                    stats.strayFilesRemoved || stats.sessionsPurged ||
+                    stats.thumbnailsRendered) {
                     LOG_INFO << "gc: " << stats.sharesReleased << " share(s) released, "
                              << stats.uploadsExpired << " upload(s) expired, "
                              << stats.blobsDeleted << " blob(s) deleted ("
                              << stats.bytesReclaimed << " bytes), "
                              << stats.strayFilesRemoved << " stray file(s), "
-                             << stats.sessionsPurged << " session(s) purged";
+                             << stats.sessionsPurged << " session(s) purged, "
+                             << stats.thumbnailsRendered << " thumbnail(s) rendered";
                 }
             } catch (const std::exception& e) {
                 // A failed sweep must not take the server down; the next one retries.

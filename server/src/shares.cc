@@ -139,9 +139,15 @@ Json::Value filesOf(Database& db, std::int64_t shareId) {
             file["uploaded_by"] = who;
         }
         // A single field rather than making the client parse MIME types: "image" when a
-        // preview has actually been rendered, "video" when the browser can play the
+        // preview exists or can still be made, "video" when the browser can play the
         // original inline, absent when there is nothing to show.
-        if (stmt.columnInt(7) == 1) {
+        //
+        // thumb = 0 counts as previewable. A blob predating the column would otherwise
+        // never be advertised, so the client would never request /thumb, so the lazy
+        // backfill there could never fire — the preview would be unreachable forever.
+        const int thumbState = static_cast<int>(stmt.columnInt(7));
+        if (thumbState == 1 ||
+            (thumbState == 0 && thumbnail::isThumbnailable(stmt.columnText(3)))) {
             file["preview"] = "image";
         } else if (isInlinePlayableVideo(stmt.columnText(3))) {
             file["preview"] = "video";

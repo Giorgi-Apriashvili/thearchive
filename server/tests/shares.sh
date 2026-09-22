@@ -257,9 +257,22 @@ check "previews respect the share password" \
 SHOT=$(sql "SELECT sha256 FROM blobs WHERE thumb=1;")
 sql "UPDATE blobs SET thumb=0 WHERE sha256='$SHOT';"
 find "$DATA/thumbs" -name "$SHOT*" -delete
+# An un-rendered image must still be advertised as previewable, or the client never
+# asks for the thumbnail and the backfill below can never fire.
+check "un-rendered image still advertised" \
+    "$(curl -s "$BASE/api/shares/$TOKP" | python3 -c "import sys,json;print(json.load(sys.stdin)['files'][0].get('preview',''))")" \
+    "image"
 check "backfills on first request" \
     "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/d/$TOKP/$PFID/thumb")" "200"
 check "and records it" "$(sql "SELECT thumb FROM blobs WHERE sha256='$SHOT';")" "1"
+
+# The sweep renders leftovers without anyone having to open the page.
+sql "UPDATE blobs SET thumb=0 WHERE sha256='$SHOT';"
+find "$DATA/thumbs" -name "$SHOT*" -delete
+gcwait
+check "sweep backfills unattended" "$(sql "SELECT thumb FROM blobs WHERE sha256='$SHOT';")" "1"
+[ -n "$(find "$DATA/thumbs" -name "$SHOT*" 2>/dev/null)" ] && ok "sweep wrote the files" \
+    || bad "sweep wrote the files" "absent"
 
 # Thumbnails are derived state: they must be reaped with the blob, by both paths.
 curl -s -o /dev/null -b "$JAR" -X DELETE "$BASE/api/shares/$TOKP/files/$PFID"
