@@ -97,6 +97,7 @@ add_executable(thearchive
     src/thumbnail.cc
     src/admin.cc
     src/storage.cc
+    src/chat.cc
 )
 
 target_include_directories(thearchive PRIVATE src)

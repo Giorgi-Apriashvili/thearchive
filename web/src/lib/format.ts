@@ -23,6 +23,16 @@ export function until(epochSeconds: number): string {
   return `${minutes} minute${minutes === 1 ? '' : 's'}`
 }
 
+// Chat timestamps. Time of day on its own is ambiguous the moment a conversation spans
+// more than one day, so anything not from today carries its date as well.
+export function chatTime(epochSeconds: number): string {
+  const at = new Date(epochSeconds * 1000)
+  const clock = at.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+  if (at.toDateString() === new Date().toDateString()) return clock
+  const day = at.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })
+  return `${day} ${clock}`
+}
+
 export function shortDate(epochSeconds: number): string {
   return new Date(epochSeconds * 1000).toLocaleDateString(undefined, {
     day: 'numeric',

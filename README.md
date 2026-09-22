@@ -1,7 +1,8 @@
 # TheArchive
 
 A self-hosted file drop for a closed group of friends. Upload files, get a link, share it,
-they download. Links expire after 30 days by default and the disk space comes back.
+they download. Links expire after 30 days by default and the disk space comes back. There
+are chat rooms alongside it, for talking about what was shared.
 
 **Stack:** C++20 / Drogon · SQLite · Svelte 5 + Vite · Caddy · Docker Compose
 
@@ -82,11 +83,12 @@ Configuration is environment-only, so nothing needs mounting into the container:
 
 ## Tests
 
-Both drive a real server over HTTP; neither needs a fixture or a mock.
+Each drives a real server over HTTP; none needs a fixture or a mock.
 
 ```bash
 ./server/tests/smoke.sh    # auth + tus, incl. an interrupted and resumed upload
 ./server/tests/shares.sh   # shares, downloads, ranges, expiry sweep
+./server/tests/chat.sh     # rooms, invitations, blocks, admin removal
 ```
 
 On Windows, VS Code's own IntelliSense shows phantom errors in the C++ files: it has
