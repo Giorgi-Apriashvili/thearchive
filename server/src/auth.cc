@@ -204,6 +204,16 @@ User requireUser(const drogon::HttpRequestPtr& req, const Auth& auth) {
     return *user;
 }
 
+User requireAdmin(const drogon::HttpRequestPtr& req, const Auth& auth) {
+    const User user = requireUser(req, auth);
+    if (!user.isAdmin) {
+        // 403 rather than 401: the session is perfectly valid, the account simply lacks
+        // the permission, and re-authenticating would not change that.
+        throw HttpError{403, "only an administrator can do that"};
+    }
+    return user;
+}
+
 namespace {
 
 drogon::HttpResponsePtr sessionResponse(const std::string& token, const std::string& username) {
@@ -326,7 +336,11 @@ void registerAuthRoutes(Auth& auth) {
         [&auth](const drogon::HttpRequestPtr& req,
                 std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
             callback(guarded([&] {
-                const User user = requireUser(req, auth);
+                // Admin-only. Registration is invite-gated precisely so an open signup
+                // cannot turn a public host into a phishing target; if every member
+                // could mint unlimited codes, that gate would only ever be as strong as
+                // the least careful account.
+                const User user = requireAdmin(req, auth);
                 Json::Value body;
                 body["code"] = auth.createInvite(user.id);
                 return drogon::HttpResponse::newHttpJsonResponse(body);

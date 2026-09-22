@@ -254,7 +254,7 @@ Two host-level details are worth planning around rather than discovering:
 | `POST` | `/api/auth/register` | invite-only |
 | `POST` | `/api/auth/login` / `logout` | |
 | `GET` | `/api/me` | |
-| `POST` | `/api/invites` | issue a code |
+| `POST` | `/api/invites` | issue a code — **admin only** |
 | `OPTIONS` | `/files` | tus capability discovery |
 | `POST` | `/files` | create upload → `Location` |
 | `HEAD` | `/files/{id}` | `Upload-Offset` — where to resume |
