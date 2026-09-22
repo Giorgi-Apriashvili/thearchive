@@ -163,6 +163,11 @@ check "history is in send order" \
 check "an author is recorded" \
     "$(as "$ALICE" GET "/api/chat/rooms/$ROOM/messages" \
        | py "import sys,json;print(json.load(sys.stdin)['messages'][0]['author'])")" "bob"
+# The role is read live rather than snapshotted, so the client can colour a name by tier.
+check "the author's role comes with it" \
+    "$(as "$ALICE" GET "/api/chat/rooms/$ROOM/messages" \
+       | py "import sys,json;m=json.load(sys.stdin)['messages'];print(m[0]['author_role'],m[1]['author_role'])")" \
+    "user admin"
 check "since= returns only what is newer" \
     "$(as "$ALICE" GET "/api/chat/rooms/$ROOM/messages?since=$((M3-1))" | bodies)" "i am"
 check "an idle poll returns nothing" \
@@ -230,6 +235,10 @@ check "members are listed" \
     "$(as "$BOB" GET "/api/chat/rooms/$ROOM/members" \
        | py "import sys,json;print(','.join(sorted(m['username'] for m in json.load(sys.stdin)['members'])))")" \
     "alice,bob"
+check "members carry their role" \
+    "$(as "$BOB" GET "/api/chat/rooms/$ROOM/members" \
+       | py "import sys,json;print(','.join(sorted('%s=%s' % (m['username'],m['role']) for m in json.load(sys.stdin)['members'])))")" \
+    "alice=admin,bob=user"
 check "the creator is marked" \
     "$(as "$BOB" GET "/api/chat/rooms/$ROOM/members" \
        | py "import sys,json;print(','.join(m['username'] for m in json.load(sys.stdin)['members'] if m['is_creator']))")" \
@@ -380,6 +389,9 @@ check "and stay attributed to him" \
 check "marked as an account that has left" \
     "$(as "$ALICE" GET "/api/chat/rooms/$ROOM/messages" \
        | py "import sys,json;print(json.load(sys.stdin)['messages'][0].get('author_departed'))")" "True"
+check "and carries no role, since there is no account to have one" \
+    "$(as "$ALICE" GET "/api/chat/rooms/$ROOM/messages" \
+       | py "import sys,json;print(json.load(sys.stdin)['messages'][0].get('author_role'))")" "None"
 check "the room he created outlives him too" \
     "$(as "$ALICE" GET /api/chat/rooms | room Wednesday | rf created_by)" "bob"
 check "but his membership is gone" \

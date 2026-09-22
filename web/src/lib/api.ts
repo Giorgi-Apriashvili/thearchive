@@ -132,6 +132,7 @@ export interface RoomMember {
   /** Joined, or — for a pending invitation — invited. */
   since: number
   is_creator: boolean
+  role: string
 }
 
 export interface RoomMembers {
@@ -151,6 +152,9 @@ export interface ChatMessage {
   deleted_by?: string
   /** The author's account has since been deleted; the message stays attributed. */
   author_departed?: boolean
+  /** The author's role *now*, not at send time — it is an identity badge rather than
+   *  history. Absent when the account is gone. */
+  author_role?: string
   /** Usernames this message named with @, as the server resolved them at send time.
    *  The client highlights these rather than re-deriving them from the text, so what is
    *  highlighted is exactly what a notifier would act on. */
