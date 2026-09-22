@@ -41,7 +41,7 @@ export const api = {
 
 export interface Me {
   username: string
-  is_admin: boolean
+  role: 'user' | 'privileged' | 'admin'
 }
 
 export interface ShareFile {
