@@ -2,6 +2,7 @@
   import { api, ApiError, type ChatMessage, type ChatRoom, type Me } from '../../lib/api'
   import { chat } from '../../lib/chat.svelte'
   import { chatTime } from '../../lib/format'
+  import { linkify } from '../../lib/linkify'
   import Confirm from '../../lib/Confirm.svelte'
 
   let { room, me }: { room: ChatRoom; me: Me } = $props()
@@ -170,9 +171,18 @@
                taken out is its own kind of dishonesty. -->
           <p class="mt-0.5 text-sm italic text-ink-700">Removed by {message.deleted_by}</p>
         {:else}
-          <!-- {message.body}, never {@html}. This is the one place in the app where
-               another person's arbitrary text reaches the DOM. -->
-          <p class="mt-0.5 whitespace-pre-wrap break-words text-sm text-ink-100">{message.body}</p>
+          <!-- Rendered as segments, never {@html}. linkify() returns data precisely so
+               that Svelte keeps escaping both the text and the href — this is the one
+               place in the app where another person's arbitrary text reaches the DOM. -->
+          <p class="mt-0.5 whitespace-pre-wrap break-words text-sm text-ink-100">
+            {#each linkify(message.body ?? '') as segment}{#if segment.href}<a
+                  href={segment.href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-accent"
+                  >{segment.text}</a
+                >{:else}{segment.text}{/if}{/each}
+          </p>
         {/if}
       </div>
     {/each}
