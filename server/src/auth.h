@@ -58,6 +58,9 @@ private:
 // Resolves the session cookie to a user, or throws HttpError(401).
 User requireUser(const drogon::HttpRequestPtr& req, const Auth& auth);
 
+// As above, but also requires the account be an administrator, or throws HttpError(403).
+User requireAdmin(const drogon::HttpRequestPtr& req, const Auth& auth);
+
 // Whether to mark cookies Secure. Off for plain-HTTP local development, since browsers
 // discard Secure cookies on http:// origins and login would silently never persist.
 bool secureCookiesEnabled();

@@ -96,6 +96,15 @@ check "cannot register a case variant of an existing name" \
     "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/auth/register" \
        -H 'Content-Type: application/json' \
        -d "{\"invite\":\"$dupe\",\"username\":\"MIXEDCASE\",\"password\":\"correct-horse-battery\"}")" "409"
+echo
+echo "=== invites are admin-only ==="
+# mixedcase joined by invite, so it is an ordinary member, not an administrator.
+check "member cannot mint an invite" \
+    "$(curl -s -o /dev/null -w '%{http_code}' -b "$CASEJAR" -X POST "$BASE/api/invites")" "403"
+check "administrator can" \
+    "$(curl -s -o /dev/null -w '%{http_code}' -b "$JAR" -X POST "$BASE/api/invites")" "200"
+check "anonymous is still 401, not 403" \
+    "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/invites")" "401"
 rm -f "$CASEJAR"
 
 echo
