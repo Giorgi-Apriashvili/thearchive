@@ -1,6 +1,7 @@
 <script lang="ts">
   import { api, ApiError } from '../../lib/api'
   import { shortDate, until } from '../../lib/format'
+  import Confirm from '../../lib/Confirm.svelte'
 
   interface Invite {
     code: string
@@ -20,7 +21,10 @@
   }
   load()
 
+  let confirming = $state(false)
+
   async function mint() {
+    confirming = false
     error = ''
     try {
       const result = await api.post<{ code: string }>('/api/invites')
@@ -49,7 +53,7 @@
 <div class="flex items-center justify-between">
   <h1 class="text-lg font-medium">Invites</h1>
   <button
-    onclick={mint}
+    onclick={() => (confirming = true)}
     class="rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-ink-950 hover:bg-accent-dim"
   >New invite</button>
 </div>
@@ -91,3 +95,13 @@
     <li class="px-4 py-3 text-sm text-ink-500">No invites yet.</li>
   {/each}
 </ul>
+
+{#if confirming}
+  <Confirm
+    title="Create an invite code?"
+    body="Creates a code that lets one person register an account. It is valid for 14 days and works for whoever holds it, so treat it like a password — anyone it reaches can join."
+    confirmLabel="Create invite"
+    onConfirm={mint}
+    onCancel={() => (confirming = false)}
+  />
+{/if}
