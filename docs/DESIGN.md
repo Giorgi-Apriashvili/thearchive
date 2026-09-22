@@ -508,6 +508,12 @@ saturation and lightness as the accent so they read as a family; `privileged` *i
 accent, since a second amber would be a distinction without a difference. None of them
 is the red used for destructive actions: an administrator speaking is not a warning.
 
+Colour is the whole of it. No tier is written out beside a name, and nothing marks your
+own messages as yours — a chat where every line is captioned with its author's rank
+stops reading as a conversation. The member popover keeps one word, *creator*, because
+that says something about the room rather than about the account, and it is the one
+thing colour cannot carry.
+
 Note which way each field points. `author_name` is a **snapshot**, because it is what the
 message was signed with and that is history. `author_role` is read **live**, because it
 is identity — promote someone and they should read as an admin everywhere, including in

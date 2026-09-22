@@ -1,6 +1,9 @@
 // Role → colour, in one place, because a name coloured one way in the message list and
 // another in the member popover is worse than no colour at all.
 //
+// Colour is the whole of it: no tier is spelled out beside a name. A chat where every
+// line is captioned with its author's rank stops reading as a conversation.
+//
 // The colours themselves are theme tokens; see app.css for why these three hues.
 
 export type Role = 'user' | 'privileged' | 'admin'
@@ -19,10 +22,4 @@ export function roleColor(role: string | undefined): string {
     default:
       return 'text-ink-300'
   }
-}
-
-/** The word shown beside a name, or null for ordinary members — labelling everyone
- *  would make the label mean nothing. */
-export function roleLabel(role: string | undefined): string | null {
-  return role === 'admin' || role === 'privileged' ? role : null
 }

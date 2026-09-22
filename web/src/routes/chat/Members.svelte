@@ -2,7 +2,7 @@
   import { fade } from 'svelte/transition'
   import type { RoomMembers } from '../../lib/api'
   import { shortDate } from '../../lib/format'
-  import { roleColor, roleLabel } from '../../lib/roles'
+  import { roleColor } from '../../lib/roles'
 
   let {
     members,
@@ -43,12 +43,10 @@
       {#each members.members as person (person.username)}
         <li class="flex items-baseline justify-between gap-2">
           <span class="truncate text-sm {roleColor(person.role)}">{person.username}</span>
+          <!-- "creator" stays: it says something about this room, not about the
+               account's tier, and it is the one thing the list cannot convey by colour. -->
           {#if person.is_creator}
             <span class="shrink-0 text-[10px] uppercase text-ink-500">creator</span>
-          {:else if roleLabel(person.role)}
-            <span class="shrink-0 text-[10px] uppercase {roleColor(person.role)} opacity-70">
-              {roleLabel(person.role)}
-            </span>
           {:else}
             <span class="tnum shrink-0 text-[10px] text-ink-700">{shortDate(person.since)}</span>
           {/if}
