@@ -97,6 +97,74 @@ check "cannot register a case variant of an existing name" \
        -H 'Content-Type: application/json' \
        -d "{\"invite\":\"$dupe\",\"username\":\"MIXEDCASE\",\"password\":\"correct-horse-battery\"}")" "409"
 echo
+echo "=== changing your own password ==="
+# `friend` is used for this and nothing else, so the password can move without
+# disturbing the sections below. Two sessions, because the interesting part is which of
+# them survives.
+PWJAR=$(mktemp); PWJAR2=$(mktemp)
+login_as() { curl -s -o /dev/null -w '%{http_code}' -c "$2" -X POST "$BASE/api/auth/login" \
+             -H 'Content-Type: application/json' \
+             -d "{\"username\":\"$1\",\"password\":\"$3\"}"; }
+try_login() { curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/auth/login" \
+              -H 'Content-Type: application/json' \
+              -d "{\"username\":\"$1\",\"password\":\"$2\"}"; }
+setpw() { curl -s -o /dev/null -w '%{http_code}' -b "$1" -X POST "$BASE/api/auth/password" \
+          -H 'Content-Type: application/json' \
+          -d "{\"current_password\":\"$2\",\"new_password\":\"$3\"}"; }
+
+check "first session opened" "$(login_as friend "$PWJAR" correct-horse-battery)" "200"
+check "second session opened" "$(login_as friend "$PWJAR2" correct-horse-battery)" "200"
+
+check "a password change needs a session" \
+    "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/auth/password" \
+       -H 'Content-Type: application/json' \
+       -d '{"current_password":"correct-horse-battery","new_password":"brand-new-secret"}')" "401"
+check "wrong current password rejected" \
+    "$(setpw "$PWJAR" not-the-right-one brand-new-secret)" "401"
+check "new password below the minimum rejected" \
+    "$(setpw "$PWJAR" correct-horse-battery short)" "400"
+check "new password identical to the old rejected" \
+    "$(setpw "$PWJAR" correct-horse-battery correct-horse-battery)" "400"
+# None of those refusals may have half-applied.
+check "the old password still works after a refused change" \
+    "$(try_login friend correct-horse-battery)" "200"
+
+check "password changed" "$(setpw "$PWJAR" correct-horse-battery brand-new-secret)" "200"
+check "the old password no longer works" "$(try_login friend correct-horse-battery)" "401"
+check "the new password does" "$(try_login friend brand-new-secret)" "200"
+# The purge and its one exception, together.
+check "the session that made the change survives" \
+    "$(curl -s -o /dev/null -w '%{http_code}' -b "$PWJAR" "$BASE/api/me")" "200"
+check "every other session is ended" \
+    "$(curl -s -o /dev/null -w '%{http_code}' -b "$PWJAR2" "$BASE/api/me")" "401"
+
+echo
+echo "=== an admin can reset a password ==="
+# The only recovery path in the system: nothing here sends mail, so a forgotten password
+# has nowhere else to go.
+uid() { curl -s -b "$JAR" "$BASE/api/admin/users" \
+        | python3 -c "import sys,json;print(next(u['id'] for u in json.load(sys.stdin) if u['username']=='$1'))"; }
+FRIEND_ID=$(uid friend)
+ALICE_ID=$(uid alice)
+
+check "an ordinary member cannot reset anyone" \
+    "$(curl -s -o /dev/null -w '%{http_code}' -b "$CASEJAR" -X POST \
+       "$BASE/api/admin/users/$FRIEND_ID/password")" "403"
+check "an admin cannot reset their own this way" \
+    "$(curl -s -o /dev/null -w '%{http_code}' -b "$JAR" -X POST \
+       "$BASE/api/admin/users/$ALICE_ID/password")" "409"
+
+RESET=$(curl -s -b "$JAR" -X POST "$BASE/api/admin/users/$FRIEND_ID/password" \
+        | python3 -c "import sys,json;print(json.load(sys.stdin)['password'])")
+check "a password comes back, long enough to satisfy the minimum" \
+    "$([ "${#RESET}" -ge 6 ] && echo yes || echo "no: '$RESET'")" "yes"
+check "it works" "$(try_login friend "$RESET")" "200"
+check "the password it replaced does not" "$(try_login friend brand-new-secret)" "401"
+check "and their remaining session is gone too" \
+    "$(curl -s -o /dev/null -w '%{http_code}' -b "$PWJAR" "$BASE/api/me")" "401"
+rm -f "$PWJAR" "$PWJAR2"
+
+echo
 echo "=== control panel ==="
 ME=$(curl -s -b "$JAR" "$BASE/api/me" | python3 -c "import sys,json;print(json.load(sys.stdin)['role'])")
 check "bootstrap account is admin" "$ME" "admin"

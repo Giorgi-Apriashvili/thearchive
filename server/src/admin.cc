@@ -264,6 +264,32 @@ void registerAdminRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
         },
         {drogon::Post});
 
+    app.registerHandler(
+        "/api/admin/users/{id}/password",
+        [&auth](const drogon::HttpRequestPtr& req,
+                std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                const std::string& id) {
+            callback(guarded([&] {
+                const User actor = requireAdmin(req, auth);
+                const std::int64_t userId = parseId(id);
+                // An admin changing their own password goes through the door that asks
+                // for the current one. This one does not ask, and should not become a
+                // way around that for the one account that can reach it.
+                if (userId == actor.id) {
+                    throw HttpError{409, "change your own password from your account page"};
+                }
+                // No requireAnotherAdminRemains: a reset does not reduce the number of
+                // administrators, and the new password is handed straight back.
+                const std::string password = auth.resetPassword(userId);
+                LOG_WARN << "admin " << actor.username << " reset the password of user "
+                         << userId;
+                Json::Value out;
+                out["password"] = password;
+                return drogon::HttpResponse::newHttpJsonResponse(out);
+            }));
+        },
+        {drogon::Post});
+
     // ---- invites -----------------------------------------------------------------
     app.registerHandler(
         "/api/admin/invites",

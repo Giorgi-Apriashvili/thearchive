@@ -3,6 +3,7 @@
   import Auth from './routes/Auth.svelte'
   import Workspace from './routes/Workspace.svelte'
   import Download from './routes/Download.svelte'
+  import Account from './routes/Account.svelte'
   import Admin from './routes/admin/Admin.svelte'
   import { router } from './lib/router.svelte'
 
@@ -12,6 +13,7 @@
     router.path.match(/^\/d\/([A-Za-z0-9_-]+)\/?$/)?.[1] ?? null,
   )
   const isAdminRoute = $derived(router.segments[0] === 'admin')
+  const isAccountRoute = $derived(router.segments[0] === 'account')
 
   let me = $state<Me | null>(null)
   let ready = $state(false)
@@ -50,6 +52,8 @@
         Not available for this account.
       </div>
     {/if}
+  {:else if me && isAccountRoute}
+    <Account {me} />
   {:else if me}
     <Workspace {me} onSignOut={() => (me = null)} />
   {:else}
