@@ -187,7 +187,67 @@ ALTER TABLE shares ADD COLUMN visibility TEXT NOT NULL DEFAULT 'private';
 UPDATE shares SET visibility = 'public';
 )SQL";
 
-constexpr std::array<Migration, 9> kMigrations{{
+// Chat. Rooms are discoverable by name to every signed-in user; everything else about
+// one requires membership.
+//
+// Note what the author columns do NOT do. Every other foreign key to users in this
+// schema is ON DELETE CASCADE, and the control panel can delete accounts — following
+// that pattern here would erase a departed member's messages and leave every
+// conversation they took part in full of holes. Messages instead drop the link and keep
+// an author_name snapshot, so history stays legible and attributed. The same applies to
+// a room's creator.
+constexpr const char* kSchemaV10 = R"SQL(
+CREATE TABLE rooms (
+    id           INTEGER PRIMARY KEY,
+    name         TEXT    NOT NULL,
+    created_by   INTEGER          REFERENCES users(id) ON DELETE SET NULL,
+    creator_name TEXT    NOT NULL,      -- snapshot; survives the account
+    created_at   INTEGER NOT NULL
+);
+
+CREATE TABLE room_members (
+    room_id      INTEGER NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+    user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    state        TEXT    NOT NULL,      -- invited | member | declined
+    invited_by   INTEGER          REFERENCES users(id) ON DELETE SET NULL,
+    invited_at   INTEGER NOT NULL,
+    responded_at INTEGER,
+    last_read_id INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (room_id, user_id)
+);
+
+CREATE TABLE messages (
+    id          INTEGER PRIMARY KEY,
+    room_id     INTEGER NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+    user_id     INTEGER          REFERENCES users(id) ON DELETE SET NULL,
+    author_name TEXT    NOT NULL,       -- see above
+    body        TEXT    NOT NULL,
+    created_at  INTEGER NOT NULL,
+    deleted_at  INTEGER,                -- soft: a tombstone, not a gap
+    deleted_by  INTEGER          REFERENCES users(id) ON DELETE SET NULL
+);
+-- Makes the polling query (room_id = ? AND id > ?) an index range scan, which is what
+-- keeps an idle poll close to free.
+CREATE INDEX idx_messages_room ON messages(room_id, id);
+
+-- Two tables rather than one with two nullable columns: declining a topic and avoiding
+-- a person are genuinely different, and this keeps both primary keys meaningful.
+CREATE TABLE room_blocks (
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    room_id    INTEGER NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, room_id)
+);
+
+CREATE TABLE user_blocks (
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    blocked_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, blocked_id)
+);
+)SQL";
+
+constexpr std::array<Migration, 10> kMigrations{{
     {1, kSchemaV1},
     {2, kSchemaV2},
     {3, kSchemaV3},
@@ -197,6 +257,7 @@ constexpr std::array<Migration, 9> kMigrations{{
     {7, kSchemaV7},
     {8, kSchemaV8},
     {9, kSchemaV9},
+    {10, kSchemaV10},
 }};
 
 }  // namespace

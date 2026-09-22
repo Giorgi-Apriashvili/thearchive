@@ -105,6 +105,42 @@ export interface StorageInfo {
   disk_available?: number
 }
 
+/** How the signed-in account stands with a room. Every room is listed to everyone —
+ *  `none` means visible but not enterable, which is what makes one askable-about. */
+export type RoomState = 'none' | 'invited' | 'member' | 'declined'
+
+export interface ChatRoom {
+  id: number
+  name: string
+  /** The creator's name at creation time; it outlives their account. */
+  created_by: string
+  created_at: number
+  state: RoomState
+  is_creator: boolean
+  member_count: number
+  /** Only when `state` is `invited`. */
+  invited_by?: string
+  /** Only when `state` is `member`. */
+  unread?: number
+}
+
+export interface ChatMessage {
+  id: number
+  author: string
+  created_at: number
+  /** Absent on a removed message — the server never sends the text again. */
+  body?: string
+  deleted?: boolean
+  deleted_by?: string
+  /** The author's account has since been deleted; the message stays attributed. */
+  author_departed?: boolean
+}
+
+export interface ChatBlocks {
+  rooms: { id: number; name: string }[]
+  users: { id: number; username: string }[]
+}
+
 export interface CreatedShare {
   token: string
   url: string

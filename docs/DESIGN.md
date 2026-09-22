@@ -91,6 +91,14 @@ share_files(id, share_id, blob_sha256, filename, content_type, size,
 uploads(id PK, owner_id, filename, content_type, total_size, offset_bytes,
         created_at, expires_at, blob_sha256, completed_at,
         client_mtime, relative_path, user_agent)
+
+rooms(id, name, created_by → users SET NULL, creator_name, created_at)
+room_members(room_id, user_id, state, invited_by, invited_at,
+             responded_at, last_read_id, PK(room_id, user_id))  -- invited|member|declined
+messages(id, room_id → rooms CASCADE, user_id → users SET NULL,
+         author_name, body, created_at, deleted_at, deleted_by)
+room_blocks(user_id, room_id, created_at, PK(user_id, room_id))
+user_blocks(user_id, blocked_id, created_at, PK(user_id, blocked_id))
 ```
 
 A **share** holds one or more files — a whole night goes out as one link. `token` is 128
@@ -186,12 +194,14 @@ Passwords are hashed with **Argon2id** (`libargon2`).
 
 ## Frontend
 
-Vite + **Svelte 5** (runes) + TypeScript + Tailwind v4 + Uppy. Builds to pure static
+Vite + **Svelte 5** (runes) + TypeScript + Tailwind v4 + `tus-js-client`. Builds to pure static
 assets that Caddy serves directly — no SSR, no Node process on the server. That keeps the
 deployment a single C++ binary plus a web server, which is the main payoff of this stack.
 
-Three screens: login/redeem-invite, upload (drag-drop + expiry picker → link), and the
-public download page.
+Screens: login/redeem-invite, the workspace (uploads and chat as two tabs), the public
+download page, and the control panel. A ~40-line router matches the path and navigates
+with `pushState`; the tab and the open chat room are both **the URL**, so a room is
+linkable, the back button works, and a reload lands where you were.
 
 ## Deployment
 
@@ -276,6 +286,15 @@ Two host-level details are worth planning around rather than discovering:
 | `GET` | `/d/{token}/{fileId}` | the bytes (public) |
 | `GET` | `/d/{token}/{fileId}/thumb?s=sm\|lg` | rendered preview, `inline` (public) |
 | `GET` | `/d/{token}/{fileId}/inline` | the original served `inline`, for `<video>` (public) |
+| `GET` | `/d/{token}/all.zip` | every file, streamed as one archive (public) |
+| `GET`/`POST` | `/api/chat/rooms` | every room annotated with my state; create one |
+| `POST` | `/api/chat/rooms/{id}/invite` | `{username}` — **creator or admin** |
+| `POST` | `/api/chat/rooms/{id}/respond` | `accept` \| `decline` \| `block_room` \| `block_user` |
+| `GET`/`POST` | `/api/chat/rooms/{id}/messages` | members only; `?since=` is a cursor |
+| `POST` | `/api/chat/rooms/{id}/read` | `{last_id}` — drives the unread badges |
+| `DELETE` | `/api/chat/messages/{id}` | **admin only**; soft delete |
+| `GET` | `/api/chat/blocks` | what I have blocked |
+| `DELETE` | `/api/chat/blocks/{room\|user}/{id}` | undo one |
 
 Downloads are always `Content-Disposition: attachment` with `X-Content-Type-Options:
 nosniff`, and any type a browser might execute in our origin is downgraded to
@@ -370,11 +389,90 @@ Thumbnails are derived state, which makes them easy to leak. Both deletion paths
 expiry sweep and explicit removal — route through `storage::removeBlobFiles`, the single
 place that knows what a blob owns on disk.
 
+## Chat
+
+Rooms on the main page, beside uploads. The rule that shapes the whole feature: **every
+room's name is visible to every signed-in member, and nothing else about it is.** A room
+nobody can see is a room nobody can ask to join, so the list is public and entry is not.
+Membership is checked in one `requireRoomMember` helper, the same reasoning as
+`authoriseShare` — a check spread across seven handlers is a check that will eventually
+be missing from one of them.
+
+A non-member gets `404`, not `403`. They already know the room exists, from the list; a
+`403` would add nothing except a way to probe which rooms a given account belongs to.
+
+### History outlives its author
+
+Every other foreign key to `users` in this schema is `ON DELETE CASCADE`, and the control
+panel can delete accounts. Following that pattern here would mean deleting a member
+**erases their side of every conversation** — which contradicts the point of permanent
+history, and leaves everyone else's replies answering nothing.
+
+So `messages.user_id` and `rooms.created_by` are `ON DELETE SET NULL`, alongside an
+`author_name` / `creator_name` snapshot taken at write time. The account goes; the words
+stay, still attributed, marked *former member*. `server/tests/chat.sh` deletes an author
+mid-suite and asserts their messages survive, because this is exactly the kind of
+property a later "clean up the cascades" change would helpfully undo.
+
+Admin removal is soft: `deleted_at` / `deleted_by` are set and the row stays, so the
+client renders *"Removed by alice"* in place. Closing the gap instead would silently
+reflow a conversation around what was taken out, which is its own kind of dishonesty.
+
+### Invitations and blocks
+
+Only a room's creator (or an admin) can invite, matching "invited by a group creator".
+Widening that to any member is one line in `chat.cc`.
+
+An invitation can be accepted, declined, or blocked — and blocking splits in two, because
+declining a topic and avoiding a person are different intentions: `room_blocks` hides one
+room, `user_blocks` stops that person inviting you anywhere. Both are listed under
+**Blocked** and can be undone; a block you cannot find is a block you cannot undo.
+
+**Inviting someone who has blocked you reports success.** The invitation is silently
+dropped. Returning an error would disclose the block to the one person it was made
+against, which is not the blocker's decision to have made for them.
+
+Admins can invite to any room, including themselves — moderation is not possible in a
+conversation you cannot read. That is the only door: nothing lets an admin read a room
+without joining it, and joining shows up in the member count like anyone else's.
+
+### Delivery: polling
+
+Two cadences. Messages poll every 2s while a room is open; the room list polls every 10s
+for as long as anyone is signed in, since its unread badge is how someone on the uploads
+tab learns a message arrived. Both stop while `document.visibilityState` is `hidden`, so a
+forgotten tab does not keep a laptop awake, and both poll immediately on waking.
+
+`idx_messages_room (room_id, id)` makes `WHERE room_id = ? AND id > ?` an index range
+scan, which is what keeps an idle poll close to free. Nothing in the API assumes polling
+— `since` is a cursor — so SSE later would be additive rather than a rewrite.
+
+The 200-message cap takes the **newest** 200, not the oldest: opening a room should land
+on the current conversation. The cost is a gap rather than a duplicate — a client more
+than 200 behind skips what it missed — and that only happens to a tab that was closed,
+which reopens at `since=0` anyway.
+
+One consequence of an incremental cursor: a tombstone lands on an id the cursor has
+already passed, so it would never arrive. Every fifth message poll therefore re-reads the
+room in full, which picks up removals and self-heals any drift.
+
+### Rendering
+
+Message bodies go through `{message.body}`, never `{@html}`. Svelte escapes by default,
+and this is the one place in the app where another person's arbitrary text reaches the
+DOM, so it is worth naming rather than leaving to habit.
+
+The uploads pane stays mounted and is merely hidden when the chat tab is showing.
+Unmounting it would discard the queue, the progress and the upload ids of anything in
+flight — switching tabs mid-upload would quietly cost someone a 3 GB video.
+
 ## Deliberately deferred
 
-- **Streaming ZIP for "download all"** — store-only (no compression; photos and video don't
-  compress), streamed so nothing hits disk. Worth doing, but v1.1.
 - **Per-user quota.** `users.quota_bytes` exists and nothing enforces it.
+- **Chat**: editing messages, attachments, typing indicators, per-room notification
+  settings, renaming or deleting a room, and message search. Each is additive; none was
+  needed to know whether the core works. Leaving a room is not there either — the only
+  way out today is never having accepted.
 - **EXIF extraction.** `client_mtime` gives a usable timestamp today; capture time,
   camera and orientation would need libexif and matter mainly to an archival mode.
 - Email. Invites are codes you paste into a chat; no SMTP anywhere.
