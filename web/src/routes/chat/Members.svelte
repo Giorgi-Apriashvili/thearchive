@@ -2,6 +2,7 @@
   import { fade } from 'svelte/transition'
   import type { RoomMembers } from '../../lib/api'
   import { shortDate } from '../../lib/format'
+  import { roleColor, roleLabel } from '../../lib/roles'
 
   let {
     members,
@@ -41,9 +42,13 @@
     <ul class="mt-1.5 space-y-1">
       {#each members.members as person (person.username)}
         <li class="flex items-baseline justify-between gap-2">
-          <span class="truncate text-sm text-ink-100">{person.username}</span>
+          <span class="truncate text-sm {roleColor(person.role)}">{person.username}</span>
           {#if person.is_creator}
-            <span class="shrink-0 text-[10px] uppercase text-accent">creator</span>
+            <span class="shrink-0 text-[10px] uppercase text-ink-500">creator</span>
+          {:else if roleLabel(person.role)}
+            <span class="shrink-0 text-[10px] uppercase {roleColor(person.role)} opacity-70">
+              {roleLabel(person.role)}
+            </span>
           {:else}
             <span class="tnum shrink-0 text-[10px] text-ink-700">{shortDate(person.since)}</span>
           {/if}
@@ -58,6 +63,8 @@
       <ul class="mt-1.5 space-y-1">
         {#each members.invited as person (person.username)}
           <li class="flex items-baseline justify-between gap-2">
+            <!-- Dimmed rather than role-coloured: they are not in the room yet, and
+                 colouring them as though they were would misreport who is present. -->
             <span class="truncate text-sm text-ink-500">{person.username}</span>
             <span class="tnum shrink-0 text-[10px] text-ink-700">{shortDate(person.since)}</span>
           </li>

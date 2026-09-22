@@ -236,7 +236,7 @@ void registerChatRoutes(Database& db, Auth& auth) {
                 Json::Value invited{Json::arrayValue};
                 auto stmt = db.prepare(
                     "SELECT u.username, m.state, m.responded_at, m.invited_at, "
-                    "       r.created_by = u.id "
+                    "       r.created_by = u.id, u.role "
                     "FROM room_members m JOIN users u ON u.id = m.user_id "
                     "JOIN rooms r ON r.id = m.room_id "
                     "WHERE m.room_id = ? AND m.state IN ('member', 'invited') "
@@ -249,6 +249,7 @@ void registerChatRoutes(Database& db, Auth& auth) {
                     row["since"] = static_cast<Json::Int64>(
                         stmt.columnIsNull(2) ? stmt.columnInt(3) : stmt.columnInt(2));
                     row["is_creator"] = stmt.columnInt(4) != 0;
+                    row["role"] = stmt.columnText(5);
                     (isMember ? members : invited).append(row);
                 }
 
@@ -480,11 +481,17 @@ void registerChatRoutes(Database& db, Auth& auth) {
                 std::int64_t lowest = 0;
                 std::int64_t highest = 0;
 
+                // The author's role is read live rather than snapshotted alongside
+                // author_name. The name is history — it is what the message was signed
+                // with. The role is identity: promote someone and they should read as an
+                // admin everywhere, including in what they said last week.
                 auto stmt = db.prepare(
                     "SELECT * FROM ("
                     "  SELECT m.id, m.author_name, m.body, m.created_at, m.deleted_at, "
-                    "         COALESCE(d.username, ''), m.user_id IS NULL "
+                    "         COALESCE(d.username, ''), m.user_id IS NULL, "
+                    "         COALESCE(a.role, '') "
                     "  FROM messages m LEFT JOIN users d ON d.id = m.deleted_by "
+                    "  LEFT JOIN users a ON a.id = m.user_id "
                     "  WHERE m.room_id = ? AND m.id > ? ORDER BY m.id DESC LIMIT ?"
                     ") ORDER BY 1");
                 stmt.bind(1, roomId).bind(2, since)
@@ -503,9 +510,12 @@ void registerChatRoutes(Database& db, Auth& auth) {
                     } else {
                         message["body"] = stmt.columnText(2);
                     }
-                    // The author's account is gone; the message is not.
+                    // The author's account is gone; the message is not. There is no role
+                    // to report either — the badge falls back to plain.
                     if (stmt.columnInt(6) != 0) {
                         message["author_departed"] = true;
+                    } else {
+                        message["author_role"] = stmt.columnText(7);
                     }
                     if (lowest == 0) {
                         lowest = id;

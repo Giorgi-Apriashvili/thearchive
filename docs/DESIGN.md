@@ -499,6 +499,21 @@ to nothing. The UI renders that differently (`@3` rather than `3`), because bein
 is a different event from something having happened. **Nothing is delivered yet**; the
 count is the substrate a notifier will read.
 
+### Who is speaking
+
+Names in chat are coloured by role — admin, privileged, ordinary member — from one
+mapping in `lib/roles.ts`, because a name coloured one way in the message list and
+another in the member popover is worse than no colour at all. The hues sit at the same
+saturation and lightness as the accent so they read as a family; `privileged` *is* the
+accent, since a second amber would be a distinction without a difference. None of them
+is the red used for destructive actions: an administrator speaking is not a warning.
+
+Note which way each field points. `author_name` is a **snapshot**, because it is what the
+message was signed with and that is history. `author_role` is read **live**, because it
+is identity — promote someone and they should read as an admin everywhere, including in
+what they said last week. A departed account reports no role at all rather than a
+guessed one.
+
 ### Rendering
 
 Message bodies go through `{message.body}`, never `{@html}`. Svelte escapes by default,

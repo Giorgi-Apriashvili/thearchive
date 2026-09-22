@@ -19,6 +19,17 @@
   --color-accent: #e0a458;
   --color-accent-dim: #b8823f;
 
+  /* Who is speaking, in chat. The three sit at the same saturation and lightness as the
+     accent so they read as one family rather than as three colours that happened to
+     land together — only the hue moves. `privileged` is the accent itself: a second
+     amber would be a distinction without a difference.
+
+     Deliberately not red-400, which this app uses for destructive actions and errors.
+     An administrator saying something is not a warning. */
+  --color-role-admin: #e3796f;
+  --color-role-privileged: var(--color-accent);
+  --color-role-user: var(--color-ink-300);
+
   --font-sans: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
   /* Reserved for the wordmark. A serif reads as a keepsake rather than as a product,
      which suits somewhere you put photos of your weekends. */
