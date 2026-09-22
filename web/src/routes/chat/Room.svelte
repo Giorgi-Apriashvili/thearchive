@@ -3,7 +3,7 @@
   import { chat } from '../../lib/chat.svelte'
   import { chatTime } from '../../lib/format'
   import { parseMessage } from '../../lib/message'
-  import { roleColor, roleLabel } from '../../lib/roles'
+  import { roleColor } from '../../lib/roles'
   import Confirm from '../../lib/Confirm.svelte'
   import Members from './Members.svelte'
 
@@ -230,20 +230,11 @@
     {#each chat.messages as message (message.id)}
       <div class="group">
         <p class="flex items-baseline gap-2">
+          <!-- Role is carried by colour alone. Spelling the tier out beside every name
+               turns a conversation into a staff list. -->
           <span class="text-xs font-medium {roleColor(message.author_role)}">
             {message.author}
           </span>
-          <!-- Your own name used to be the one in accent. Now that colour means
-               `privileged`, so you are marked with a word instead — a colour cannot
-               carry two meanings at once. -->
-          {#if message.author === me.username && !message.author_departed}
-            <span class="text-[10px] uppercase text-ink-700">you</span>
-          {/if}
-          {#if roleLabel(message.author_role)}
-            <span class="text-[10px] uppercase {roleColor(message.author_role)} opacity-70">
-              {roleLabel(message.author_role)}
-            </span>
-          {/if}
           {#if message.author_departed}
             <span class="text-[10px] uppercase text-ink-700" title="This account has been deleted">
               former member
