@@ -255,7 +255,7 @@ Two host-level details are worth planning around rather than discovering:
 | `POST` | `/api/auth/register` | invite-only |
 | `POST` | `/api/auth/login` / `logout` | |
 | `GET` | `/api/me` | |
-| `POST` | `/api/invites` | issue a code — **admin only** |
+| `POST` | `/api/invites` | issue a code — **privileged or admin** |
 | `GET` | `/api/admin/users`, `/users/{id}` | list and per-user detail |
 | `POST` | `/api/admin/users/{id}/{role,disable,enable,revoke}` | |
 | `DELETE` | `/api/admin/users/{id}` | destructive, cascades |
@@ -286,10 +286,18 @@ handler computes the byte window and passes explicit offset/length.
 ## Roles and the control panel
 
 Three tiers replace what was an `is_admin` boolean: `user`, `privileged`, `admin`.
-`privileged` grants nothing beyond `user` — it exists so the tier can be assigned before
-anyone decides what it should mean, without a second migration over live data. The old
+`privileged` can issue invites; `admin` additionally reaches the control panel. The old
 boolean was dropped rather than kept alongside, since two representations of one fact
 are exactly how they drift apart.
+
+Checks go through `requireRole(req, auth, minimum)` against an ordered rank — `user` <
+`privileged` < `admin` — rather than a predicate per capability. `roleRank` returns -1
+for anything unrecognised, so an unexpected value in the database fails closed instead
+of satisfying every comparison.
+
+Invites remain gated because an open signup on a public IP becomes a phishing host
+within days. Widening them to `privileged` means vouching for a newcomer no longer has
+to route through one person, while the gate itself stays shut.
 
 Every `/api/admin/*` route is behind `requireAdmin`. The frontend hiding a link is
 presentation, not access control.

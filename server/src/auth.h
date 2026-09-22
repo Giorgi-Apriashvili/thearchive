@@ -30,8 +30,12 @@ struct User {
     bool isAdmin() const { return role == "admin"; }
 };
 
-// The roles that may be assigned, in ascending order of privilege.
+// The roles that may be assigned.
 bool isValidRole(const std::string& role);
+
+// Roles are ordered: user < privileged < admin. Returns -1 for anything unrecognised,
+// so an unknown value in the database fails closed rather than passing every check.
+int roleRank(const std::string& role);
 
 class Auth {
 public:
@@ -66,8 +70,14 @@ private:
 // Resolves the session cookie to a user, or throws HttpError(401).
 User requireUser(const drogon::HttpRequestPtr& req, const Auth& auth);
 
-// As above, but also requires the account be an administrator, or throws HttpError(403).
-User requireAdmin(const drogon::HttpRequestPtr& req, const Auth& auth);
+// As above, but also requires the account rank at or above `minimum`, or throws
+// HttpError(403).
+User requireRole(const drogon::HttpRequestPtr& req, const Auth& auth,
+                 const std::string& minimum);
+
+inline User requireAdmin(const drogon::HttpRequestPtr& req, const Auth& auth) {
+    return requireRole(req, auth, "admin");
+}
 
 // Whether to mark cookies Secure. Off for plain-HTTP local development, since browsers
 // discard Secure cookies on http:// origins and login would silently never persist.
