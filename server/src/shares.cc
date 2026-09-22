@@ -37,6 +37,7 @@ struct ShareRow {
     bool hasMaxDownloads = false;
     std::int64_t maxDownloads = 0;
     std::int64_t downloadCount = 0;
+    std::string visibility = "private";
 };
 
 // Looks up a live share. Expired, revoked and never-existed are deliberately
@@ -45,7 +46,7 @@ struct ShareRow {
 ShareRow loadLiveShare(Database& db, const std::string& token) {
     auto stmt = db.prepare(
         "SELECT id, owner_id, COALESCE(title, ''), created_at, expires_at, "
-        "COALESCE(password_hash, ''), max_downloads, download_count "
+        "COALESCE(password_hash, ''), max_downloads, download_count, visibility "
         "FROM shares WHERE token = ? AND deleted_at IS NULL AND expires_at > ?");
     stmt.bind(1, token).bind(2, nowSeconds());
     if (!stmt.step()) {
@@ -61,6 +62,7 @@ ShareRow loadLiveShare(Database& db, const std::string& token) {
     row.hasMaxDownloads = !stmt.columnIsNull(6);
     row.maxDownloads = stmt.columnInt(6);
     row.downloadCount = stmt.columnInt(7);
+    row.visibility = stmt.columnText(8);
     return row;
 }
 
@@ -68,6 +70,12 @@ std::string suppliedPassword(const drogon::HttpRequestPtr& req) {
     const std::string header = req->getHeader("X-Share-Password");
     return header.empty() ? req->getParameter("p") : header;
 }
+
+// Resolves a share and authorises the requester: existence, then visibility, then the
+// optional password. Every public entry point goes through here — a check that has to be
+// remembered at five call sites is a check that will be forgotten at one of them.
+ShareRow authoriseShare(Database& db, const Auth& auth, const std::string& token,
+                        const drogon::HttpRequestPtr& req);
 
 void requireSharePassword(const ShareRow& share, const drogon::HttpRequestPtr& req) {
     if (share.passwordHash.empty()) {
@@ -78,6 +86,28 @@ void requireSharePassword(const ShareRow& share, const drogon::HttpRequestPtr& r
         // 401 rather than 403: the client can usefully retry with a credential.
         throw HttpError{401, "this link requires a password"};
     }
+}
+
+ShareRow authoriseShare(Database& db, const Auth& auth, const std::string& token,
+                        const drogon::HttpRequestPtr& req) {
+    const ShareRow share = loadLiveShare(db, token);
+    const auto viewer = auth.userForSession(req->getCookie(kSessionCookie));
+
+    if (share.visibility != "public" && !viewer) {
+        // 401, not 403: signing in genuinely resolves this, so the client should be told
+        // to authenticate rather than that the door is permanently shut. The reason lets
+        // the download page offer a sign-in prompt instead of a password box — both
+        // cases are otherwise an indistinguishable 401.
+        throw HttpError{401, "this link is only available to members", "members_only"};
+    }
+
+    // The owner set the password, and an admin has every other key already.
+    const bool privileged =
+        viewer && (viewer->id == share.ownerId || viewer->isAdmin());
+    if (!privileged) {
+        requireSharePassword(share, req);
+    }
+    return share;
 }
 
 // Containers a browser will play from a <video> element. Deliberately narrow: this
@@ -346,7 +376,7 @@ void registerShareRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
                         "SELECT s.token, COALESCE(s.title, ''), s.created_at, s.expires_at, "
                         "       s.download_count, s.max_downloads, "
                         "       s.password_hash IS NOT NULL, "
-                        "       COUNT(sf.id), COALESCE(SUM(sf.size), 0) "
+                        "       COUNT(sf.id), COALESCE(SUM(sf.size), 0), s.visibility "
                         "FROM shares s LEFT JOIN share_files sf ON sf.share_id = s.id "
                         "WHERE s.owner_id = ? AND s.deleted_at IS NULL "
                         "GROUP BY s.id ORDER BY s.created_at DESC");
@@ -364,6 +394,7 @@ void registerShareRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
                                 static_cast<Json::Int64>(stmt.columnInt(5));
                         }
                         share["password_protected"] = stmt.columnInt(6) != 0;
+                        share["visibility"] = stmt.columnText(9);
                         share["file_count"] = static_cast<Json::Int64>(stmt.columnInt(7));
                         share["total_bytes"] = static_cast<Json::Int64>(stmt.columnInt(8));
                         out.append(share);
@@ -392,6 +423,12 @@ void registerShareRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
                     throw HttpError{400, "max_downloads must be at least 1"};
                 }
 
+                // Private unless explicitly opted out of. Defaulting the other way
+                // would mean a slip of attention publishes a link to the internet.
+                const bool isPublic =
+                    body.isMember("public") && body["public"].isBool() &&
+                    body["public"].asBool();
+
                 const std::int64_t now = nowSeconds();
                 const std::string token = crypto::randomToken(16);
                 const std::string passwordHash =
@@ -402,13 +439,15 @@ void registerShareRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
 
                 auto insertShare = db.prepare(
                     "INSERT INTO shares (token, owner_id, title, created_at, expires_at, "
-                    "password_hash, max_downloads) VALUES (?, ?, ?, ?, ?, ?, ?)");
+                    "password_hash, max_downloads, visibility) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
                 insertShare.bind(1, token).bind(2, user.id);
                 title.empty() ? insertShare.bindNull(3) : insertShare.bind(3, title);
                 insertShare.bind(4, now).bind(5, now + std::int64_t{days} * 86400);
                 passwordHash.empty() ? insertShare.bindNull(6)
                                      : insertShare.bind(6, passwordHash);
                 hasMaxDownloads ? insertShare.bind(7, maxDownloads) : insertShare.bindNull(7);
+                insertShare.bind(8, std::string{isPublic ? "public" : "private"});
                 insertShare.run();
                 const std::int64_t shareId = db.lastInsertId();
 
@@ -470,11 +509,13 @@ void registerShareRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
                 out["expires_at"] = static_cast<Json::Int64>(now + std::int64_t{days} * 86400);
                 out["file_count"] = static_cast<Json::Int64>(body["uploads"].size());
                 out["total_bytes"] = static_cast<Json::Int64>(totalBytes);
+                out["visibility"] = isPublic ? "public" : "private";
                 auto resp = drogon::HttpResponse::newHttpJsonResponse(out);
                 resp->setStatusCode(drogon::k201Created);
                 LOG_INFO << "share " << token << " by " << user.username << ": "
                          << body["uploads"].size() << " file(s), " << totalBytes
-                         << " bytes, " << days << "d";
+                         << " bytes, " << days << "d, "
+                         << (isPublic ? "public" : "private");
                 return resp;
             }));
         },
@@ -503,16 +544,9 @@ void registerShareRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
                     return drogon::HttpResponse::newHttpJsonResponse(out);
                 }
 
-                const ShareRow share = loadLiveShare(db, token);
-
-                // The owner set the password. Making them type it again to look at their
-                // own share from their own workspace would be theatre, and it is the
-                // owner who needs this view to manage the files in it.
+                const ShareRow share = authoriseShare(db, auth, token, req);
                 const auto viewer = auth.userForSession(req->getCookie(kSessionCookie));
                 const bool isOwner = viewer && viewer->id == share.ownerId;
-                if (!isOwner) {
-                    requireSharePassword(share, req);
-                }
 
                 Json::Value out;
                 out["token"] = token;
@@ -521,6 +555,7 @@ void registerShareRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
                 out["created_at"] = static_cast<Json::Int64>(share.createdAt);
                 out["expires_at"] = static_cast<Json::Int64>(share.expiresAt);
                 out["download_count"] = static_cast<Json::Int64>(share.downloadCount);
+                out["visibility"] = share.visibility;
                 if (share.hasMaxDownloads) {
                     out["max_downloads"] = static_cast<Json::Int64>(share.maxDownloads);
                 }
@@ -612,10 +647,10 @@ void registerShareRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
     // Neither of these touches download_count. Browsing a gallery of forty photos would
     // otherwise exhaust a share's max_downloads before the recipient had downloaded
     // anything — the same reasoning that already exempts ranged requests.
-    const auto resolvePreview = [&db](const std::string& token, const std::string& fileId,
-                                      const drogon::HttpRequestPtr& req) {
-        const ShareRow share = loadLiveShare(db, token);
-        requireSharePassword(share, req);
+    const auto resolvePreview = [&db, &auth](const std::string& token,
+                                             const std::string& fileId,
+                                             const drogon::HttpRequestPtr& req) {
+        const ShareRow share = authoriseShare(db, auth, token, req);
 
         std::int64_t wanted = 0;
         try {
@@ -726,12 +761,11 @@ void registerShareRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
     // ---- download everything as one archive --------------------------------------
     app.registerHandler(
         "/d/{token}/all.zip",
-        [&db, dataDir](const drogon::HttpRequestPtr& req,
+        [&db, &auth, dataDir](const drogon::HttpRequestPtr& req,
                        std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                        const std::string& token) {
             callback(guarded([&]() -> drogon::HttpResponsePtr {
-                const ShareRow share = loadLiveShare(db, token);
-                requireSharePassword(share, req);
+                const ShareRow share = authoriseShare(db, auth, token, req);
 
                 std::vector<zip::Entry> entries;
                 std::set<std::string> used;
@@ -800,12 +834,11 @@ void registerShareRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
     // ---- download ---------------------------------------------------------------
     app.registerHandler(
         "/d/{token}/{fileId}",
-        [&db, dataDir](const drogon::HttpRequestPtr& req,
+        [&db, &auth, dataDir](const drogon::HttpRequestPtr& req,
                        std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                        const std::string& token, const std::string& fileId) {
             callback(guarded([&]() -> drogon::HttpResponsePtr {
-                const ShareRow share = loadLiveShare(db, token);
-                requireSharePassword(share, req);
+                const ShareRow share = authoriseShare(db, auth, token, req);
 
                 std::int64_t wanted = 0;
                 try {

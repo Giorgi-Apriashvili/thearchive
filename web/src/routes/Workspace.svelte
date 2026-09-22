@@ -39,6 +39,9 @@
   let expiresDays = $state(30)
   let password = $state('')
   let maxDownloads = $state('')
+  // Private by default: the safe option should be the one you get by not thinking
+  // about it.
+  let isPrivate = $state(true)
 
   const ready = $derived(items.filter((i) => i.status === 'done' && i.uploadId))
   const busy = $derived(items.some((i) => i.status === 'uploading'))
@@ -152,12 +155,14 @@
       if (title.trim()) body.title = title.trim()
       if (password) body.password = password
       if (maxDownloads) body.max_downloads = Number(maxDownloads)
+      if (!isPrivate) body.public = true
 
       created = await api.post<CreatedShare>('/api/shares', body)
       items = []
       title = ''
       password = ''
       maxDownloads = ''
+      isPrivate = true
       await loadShares()
     } catch (e) {
       error = e instanceof ApiError ? e.message : 'could not create the link'
@@ -380,6 +385,18 @@
           class="mt-1 w-full rounded-lg border border-ink-700 bg-ink-900 px-3 py-2 text-sm outline-none focus:border-accent"
         />
       </label>
+      <label class="flex cursor-pointer items-start gap-3 rounded-lg border border-ink-700 bg-ink-900 px-3 py-2.5 sm:col-span-2">
+        <input type="checkbox" bind:checked={isPrivate} class="mt-0.5 accent-[#e0a458]" />
+        <span class="text-xs">
+          <span class="block text-ink-100">Private — members only</span>
+          <span class="mt-0.5 block text-ink-500">
+            {isPrivate
+              ? 'Only people with an account here can open the link.'
+              : 'Anyone with the link can open it, account or not.'}
+          </span>
+        </span>
+      </label>
+
       <label class="block sm:col-span-2">
         <span class="text-xs text-ink-500">Password (optional)</span>
         <input
@@ -412,7 +429,10 @@
 
   {#if created}
     <div class="mt-6 rounded-xl border border-accent/40 bg-accent/5 p-4">
-      <p class="text-xs text-ink-500">Link created — expires in {until(created.expires_at)}</p>
+      <p class="text-xs text-ink-500">
+        Link created — expires in {until(created.expires_at)} ·
+        {created.visibility === 'public' ? 'anyone with the link' : 'members only'}
+      </p>
       <div class="mt-2 flex items-center gap-3">
         <input
           readonly
@@ -450,7 +470,8 @@
                   1
                     ? ''
                     : 's'}
-                  {#if share.password_protected}· password{/if}
+                  {#if share.visibility === 'public'}· public{:else}· members only{/if}
+                {#if share.password_protected}· password{/if}
                 </p>
               </div>
               <div class="flex shrink-0 items-center gap-3 text-xs">

@@ -7,6 +7,9 @@
 
   let share = $state<ShareDetail | null>(null)
   let needsPassword = $state(false)
+  // A members-only link and a password-protected one both answer 401; only the reason
+  // distinguishes them, and offering a password box for the former would be a dead end.
+  let needsSignIn = $state(false)
   let password = $state('')
   let error = $state('')
   let loading = $state(true)
@@ -25,7 +28,9 @@
       needsPassword = false
     } catch (e) {
       share = null
-      if (e instanceof ApiError && e.status === 401) {
+      if (e instanceof ApiError && e.reason === 'members_only') {
+        needsSignIn = true
+      } else if (e instanceof ApiError && e.status === 401) {
         needsPassword = true
         if (candidate) error = 'That password did not work.'
       } else {
@@ -73,6 +78,16 @@
 
   {#if loading}
     <p class="mt-10 text-sm text-ink-500">Loading…</p>
+  {:else if needsSignIn}
+    <h1 class="mt-8 text-xl font-semibold tracking-tight">This link is members only</h1>
+    <p class="mt-2 text-sm text-ink-500">
+      Whoever shared it limited it to people with an account here. Sign in and open the
+      link again.
+    </p>
+    <a
+      href="/"
+      class="mt-6 inline-block rounded-lg bg-accent px-4 py-2 text-sm font-medium text-ink-950 hover:bg-accent-dim"
+    >Sign in</a>
   {:else if needsPassword}
     <h1 class="mt-8 text-xl font-semibold tracking-tight">This link is password protected</h1>
     <form
