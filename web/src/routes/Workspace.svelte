@@ -55,6 +55,9 @@
           Control panel
         </a>
       {/if}
+      <a href="/account" onclick={(e) => link(e, '/account')} class="text-ink-500 hover:text-ink-300">
+        Account
+      </a>
       <button class="text-ink-500 hover:text-ink-300" onclick={signOut}>Sign out</button>
     </div>
   </header>

@@ -3,6 +3,7 @@
   import { bytes, shortDate, until } from '../../lib/format'
   import { router, link } from '../../lib/router.svelte'
   import VisibilityToggle from '../../lib/VisibilityToggle.svelte'
+  import Confirm from '../../lib/Confirm.svelte'
 
   let { id }: { id: string } = $props()
 
@@ -75,6 +76,25 @@
   }
 
   const roles = ['user', 'privileged', 'admin'] as const
+
+  // The only recovery path there is — nothing here sends mail. The generated password is
+  // returned once and never stored, so it is held in memory until this page is left.
+  let confirmingReset = $state(false)
+  let issued = $state('')
+
+  async function resetPassword() {
+    confirmingReset = false
+    error = ''
+    busy = 'password'
+    try {
+      const result = await api.post<{ password: string }>(`/api/admin/users/${id}/password`)
+      issued = result.password
+    } catch (e) {
+      error = e instanceof ApiError ? e.message : 'could not reset the password'
+    } finally {
+      busy = ''
+    }
+  }
 
   async function revokeShare(token: string) {
     await api.del(`/api/admin/shares/${token}`)
@@ -152,6 +172,36 @@
     </button>
   </section>
 
+  <section class="mt-4 rounded-xl border border-ink-800 p-4">
+    <h2 class="text-sm font-medium text-ink-300">Reset password</h2>
+    <p class="mt-1 text-xs text-ink-500">
+      Sets a new password and ends every session they have. There is no email in this
+      system, so this is the only way back in for someone who has forgotten theirs.
+    </p>
+
+    {#if issued}
+      <div class="mt-3 rounded-lg border border-accent/40 bg-accent/5 px-3 py-2">
+        <div class="flex items-center justify-between gap-3">
+          <code class="truncate text-sm text-accent">{issued}</code>
+          <button
+            class="shrink-0 text-xs text-ink-500 hover:text-ink-300"
+            onclick={() => navigator.clipboard.writeText(issued)}>Copy</button
+          >
+        </div>
+        <p class="mt-1.5 text-xs text-ink-500">
+          Only stored as a hash, so this cannot be shown again. Give it to
+          {user.username} and have them change it on their account page.
+        </p>
+      </div>
+    {:else}
+      <button
+        disabled={busy !== ''}
+        onclick={() => (confirmingReset = true)}
+        class="mt-3 rounded-lg border border-ink-700 px-3 py-1.5 text-xs text-ink-300 transition hover:border-ink-500 disabled:opacity-40"
+      >Reset password</button>
+    {/if}
+  </section>
+
   <section class="mt-4 rounded-xl border border-red-950 bg-red-950/20 p-4">
     <h2 class="text-sm font-medium text-red-300">Delete account</h2>
     <p class="mt-1 text-xs text-ink-500">
@@ -226,4 +276,14 @@
       </ul>
     {/if}
   </section>
+
+  {#if confirmingReset}
+    <Confirm
+      title="Reset {user.username}'s password?"
+      body="They will be signed out everywhere and will not be able to sign in again until you give them the new password. It is shown once and cannot be recovered afterwards."
+      confirmLabel="Reset password"
+      onConfirm={resetPassword}
+      onCancel={() => (confirmingReset = false)}
+    />
+  {/if}
 {/if}

@@ -48,6 +48,19 @@ public:
 
     std::string login(const std::string& username, const std::string& password);
 
+    // Verifies `current`, sets `next`, and ends every other session for the account.
+    // `keepToken` is the caller's own raw session token, which survives — changing your
+    // password should not sign you out of the tab you changed it in. What stops a stolen
+    // session locking the owner out is the current-password check, not the purge.
+    void changePassword(const User& user, const std::string& current,
+                        const std::string& next, const std::string& keepToken);
+
+    // Generates a password, sets it, and ends every session for that account. Returns
+    // the plaintext, which is shown once and never stored. This is the only recovery
+    // path there is: no mail leaves this system, so a forgotten password has nowhere
+    // else to go.
+    std::string resetPassword(std::int64_t userId);
+
     std::optional<User> userForSession(const std::string& token) const;
 
     void logout(const std::string& token);

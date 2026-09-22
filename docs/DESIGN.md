@@ -195,6 +195,40 @@ Providers' abuse teams are strict, and repeated reports end with the server null
 Sessions are a random 256-bit token in an `HttpOnly; Secure; SameSite=Lax` cookie.
 Passwords are hashed with **Argon2id** (`libargon2`).
 
+### Changing a password
+
+`POST /api/auth/password` takes the current password as well as the new one. Requiring it
+is what stops a borrowed browser from becoming a locked-out account, and it is checked
+*before* the new password is validated — otherwise a validation message would tell
+someone holding a stolen session what the password rules are before they had shown they
+belong here.
+
+A successful change **ends every other session for that account**, in the same
+transaction as the hash update: a new password with the old cookies still live is exactly
+the state the purge exists to prevent. `sessions.token` stores a SHA-256 of the real
+token, so the "keep this one" comparison hashes the caller's cookie to match.
+
+**The caller's own session deliberately survives.** Changing your password should not
+sign you out of the tab you changed it in, and the guard against a stolen session is the
+current-password check rather than the purge. Rotating the surviving token was considered
+and skipped: every other session is already gone, so it is one only this client holds.
+
+The endpoint needs a session, so it adds no anonymous brute-force surface. The absence of
+rate limiting on `/api/auth/login` is unchanged by this and remains open.
+
+### Recovery, such as it is
+
+There is no email anywhere in this system and no intention to add SMTP, so nothing can be
+sent to someone who has forgotten their password. `POST /api/admin/users/{id}/password`
+is the whole recovery story: an admin triggers it, the server generates a 12-character
+token, stores only its hash, and returns the plaintext **once**. Every session for that
+account ends — whoever is asking for the reset is not the person holding those cookies.
+
+An admin cannot reset their own password this way (`409`, pointing at the account page).
+The one account that can reach the endpoint should not use it to skip the
+current-password check. There is no `requireAnotherAdminRemains` guard, because a reset
+does not reduce the number of admins and the new password is handed straight back.
+
 ## Frontend
 
 Vite + **Svelte 5** (runes) + TypeScript + Tailwind v4 + `tus-js-client`. Builds to pure static
@@ -202,7 +236,8 @@ assets that Caddy serves directly — no SSR, no Node process on the server. Tha
 deployment a single C++ binary plus a web server, which is the main payoff of this stack.
 
 Screens: login/redeem-invite, the workspace (uploads and chat as two tabs), the public
-download page, and the control panel. A ~40-line router matches the path and navigates
+download page, the account page (`/account`, where you change your password), and the
+control panel. A ~40-line router matches the path and navigates
 with `pushState`; the tab and the open chat room are both **the URL**, so a room is
 linkable, the back button works, and a reload lands where you were.
 
@@ -267,10 +302,12 @@ Two host-level details are worth planning around rather than discovering:
 | `POST` | `/api/auth/bootstrap` | first admin; refuses once any user exists |
 | `POST` | `/api/auth/register` | invite-only |
 | `POST` | `/api/auth/login` / `logout` | |
+| `POST` | `/api/auth/password` | `{current_password, new_password}`; ends other sessions |
 | `GET` | `/api/me` | |
 | `POST` | `/api/invites` | issue a code — **privileged or admin** |
 | `GET` | `/api/admin/users`, `/users/{id}` | list and per-user detail |
 | `POST` | `/api/admin/users/{id}/{role,disable,enable,revoke}` | |
+| `POST` | `/api/admin/users/{id}/password` | generate one, shown once; ends their sessions |
 | `DELETE` | `/api/admin/users/{id}` | destructive, cascades |
 | `GET`/`DELETE` | `/api/admin/invites[/{code}]` | list; revoke an unredeemed code |
 | `GET`/`DELETE` | `/api/admin/shares[/{token}]` | every live share; revoke any |

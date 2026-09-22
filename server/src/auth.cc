@@ -180,6 +180,59 @@ std::string Auth::login(const std::string& rawUsername, const std::string& passw
     return startSession(userId);
 }
 
+void Auth::changePassword(const User& user, const std::string& current,
+                          const std::string& next, const std::string& keepToken) {
+    auto stmt = db_.prepare("SELECT password_hash FROM users WHERE id = ?");
+    stmt.bind(1, user.id);
+    if (!stmt.step()) {
+        throw HttpError{404, "no such user"};
+    }
+    const std::string hash = stmt.columnText(0);
+
+    // Checked before the new password is even looked at. Proving you are the account
+    // holder is the point of this endpoint; a validation message on the new password
+    // would otherwise tell someone with a borrowed session what the rules are before
+    // they have shown they belong here.
+    if (!crypto::verifyPassword(hash, current)) {
+        throw HttpError{401, "current password is incorrect"};
+    }
+    validatePassword(next);
+    if (next == current) {
+        throw HttpError{400, "the new password must be different from the current one"};
+    }
+
+    // One transaction: a new password with the old sessions still live is exactly the
+    // state the purge below exists to prevent.
+    Transaction tx{db_};
+    auto update = db_.prepare("UPDATE users SET password_hash = ? WHERE id = ?");
+    update.bind(1, crypto::hashPassword(next)).bind(2, user.id).run();
+
+    // sessions.token holds the SHA-256 of the real token, so the comparison hashes too.
+    auto purge = db_.prepare("DELETE FROM sessions WHERE user_id = ? AND token != ?");
+    purge.bind(1, user.id).bind(2, crypto::sha256Hex(keepToken)).run();
+    tx.commit();
+}
+
+std::string Auth::resetPassword(std::int64_t userId) {
+    // 12 characters of base64url, the same shape as an invite code: long enough to be
+    // worth typing once and short enough to read down a phone line.
+    const std::string password = crypto::randomToken(9);
+
+    Transaction tx{db_};
+    auto update = db_.prepare("UPDATE users SET password_hash = ? WHERE id = ?");
+    update.bind(1, crypto::hashPassword(password)).bind(2, userId).run();
+    if (db_.changes() == 0) {
+        throw HttpError{404, "no such user"};
+    }
+    // Every session, with no exception: whoever is asking for this reset is not the
+    // person holding those cookies.
+    auto purge = db_.prepare("DELETE FROM sessions WHERE user_id = ?");
+    purge.bind(1, userId).run();
+    tx.commit();
+
+    return password;
+}
+
 std::optional<User> Auth::userForSession(const std::string& token) const {
     if (token.empty()) {
         return std::nullopt;
@@ -332,6 +385,27 @@ void registerAuthRoutes(Auth& auth) {
                 cleared.setMaxAge(0);
                 resp->addCookie(cleared);
                 return resp;
+            }));
+        },
+        {drogon::Post});
+
+    app.registerHandler(
+        "/api/auth/password",
+        [&auth](const drogon::HttpRequestPtr& req,
+                std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
+            callback(guarded([&] {
+                const User user = requireUser(req, auth);
+                std::shared_ptr<Json::Value> holder;
+                const Json::Value& json = requireJson(req, holder);
+                // The caller's own cookie is what survives the purge, so it is passed
+                // down rather than re-read inside Auth.
+                auth.changePassword(user, requireString(json, "current_password"),
+                                    requireString(json, "new_password"),
+                                    req->getCookie(kSessionCookie));
+                LOG_INFO << "user " << user.username << " changed their password";
+                Json::Value body;
+                body["ok"] = true;
+                return drogon::HttpResponse::newHttpJsonResponse(body);
             }));
         },
         {drogon::Post});
