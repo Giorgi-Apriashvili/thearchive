@@ -165,6 +165,44 @@ check "and their remaining session is gone too" \
 rm -f "$PWJAR" "$PWJAR2"
 
 echo
+echo "=== an admin can rename someone ==="
+rename() { curl -s -o /dev/null -w '%{http_code}' -b "$1" -X POST \
+           "$BASE/api/admin/users/$2/username" \
+           -H 'Content-Type: application/json' -d "{\"username\":\"$3\"}"; }
+NAMEJAR=$(mktemp)
+check "a session to rename out from under" "$(login_as friend "$NAMEJAR" "$RESET")" "200"
+
+check "an ordinary member cannot rename anyone" \
+    "$(rename "$CASEJAR" "$FRIEND_ID" nope)" "403"
+check "an invalid name is refused" "$(rename "$JAR" "$FRIEND_ID" ab)" "400"
+check "so is one already taken" "$(rename "$JAR" "$FRIEND_ID" alice)" "409"
+check "an unknown account 404s" "$(rename "$JAR" 999999 whoever)" "404"
+check "renaming still 'friend'" "$(curl -s -b "$JAR" "$BASE/api/admin/users/$FRIEND_ID" \
+    | python3 -c 'import sys,json;print(json.load(sys.stdin)["username"])')" "friend"
+
+# Normalised on the way in, exactly as at registration.
+check "renamed" "$(rename "$JAR" "$FRIEND_ID" '  GioRgi  ')" "200"
+check "stored lowercased and trimmed" \
+    "$(curl -s -b "$JAR" "$BASE/api/admin/users/$FRIEND_ID" \
+       | python3 -c 'import sys,json;print(json.load(sys.stdin)["username"])')" "giorgi"
+check "renaming to the name they already have is refused" \
+    "$(rename "$JAR" "$FRIEND_ID" giorgi)" "400"
+
+check "the old name no longer signs in" "$(try_login friend "$RESET")" "401"
+check "the new one does" "$(try_login giorgi "$RESET")" "200"
+# Sessions key on user_id, so a rename is not a reason to sign anyone out.
+check "their existing session still works" \
+    "$(curl -s -o /dev/null -w '%{http_code}' -b "$NAMEJAR" "$BASE/api/me")" "200"
+check "and reports the new name" \
+    "$(curl -s -b "$NAMEJAR" "$BASE/api/me" \
+       | python3 -c 'import sys,json;print(json.load(sys.stdin)["username"])')" "giorgi"
+# The freed name is a name again.
+check "the name they left behind can be taken" \
+    "$(rename "$JAR" "$ALICE_ID" friend)" "200"
+check "and alice is restored" "$(rename "$JAR" "$ALICE_ID" alice)" "200"
+rm -f "$NAMEJAR"
+
+echo
 echo "=== control panel ==="
 ME=$(curl -s -b "$JAR" "$BASE/api/me" | python3 -c "import sys,json;print(json.load(sys.stdin)['role'])")
 check "bootstrap account is admin" "$ME" "admin"

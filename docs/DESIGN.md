@@ -216,6 +216,33 @@ and skipped: every other session is already gone, so it is one only this client 
 The endpoint needs a session, so it adds no anonymous brute-force surface. The absence of
 rate limiting on `/api/auth/login` is unchanged by this and remains open.
 
+### Renaming an account
+
+`POST /api/admin/users/{id}/username` normalises and validates the new name exactly as
+registration does, so a rename cannot produce a name that could not have been registered.
+No guard refuses it — not on yourself, not on the last admin — because a rename removes
+no privilege and ends no session. Sessions key on `user_id`, so nobody is signed out.
+
+**The rename carries into the chat snapshots**, `messages.author_name` and
+`rooms.creator_name`, in the same transaction. Those columns exist so a *deleted*
+member's history stays attributed, not to freeze a display name; leaving them behind
+would mean someone's messages carried one name while their uploads carried another,
+because `share_files.uploaded_by` and `blobs.first_uploader` are foreign keys and follow
+a rename for free.
+
+`message_mentions.mentioned_name` deliberately does **not** follow. It mirrors the
+literal `@name` in a message body, which nobody may rewrite, and the client matches the
+two against each other to decide what to highlight. The link to the account is `user_id`,
+and that is what a notifier reads.
+
+One consequence, worth stating because it is the kind of thing that silently goes wrong:
+once a name can be changed, it can also be **reused**, so an old `@bob` may not mean
+today's bob. "Did this message name me" is therefore answered server-side by account
+(`mentions_me` on each message) rather than by the client comparing strings. The client
+still compares the name to decide *which* `@` in a message naming several people is the
+one that meant you — the flag cannot answer that, and the comparison cannot answer the
+first question. Both are needed.
+
 ### Recovery, such as it is
 
 There is no email anywhere in this system and no intention to add SMTP, so nothing can be
@@ -308,6 +335,7 @@ Two host-level details are worth planning around rather than discovering:
 | `GET` | `/api/admin/users`, `/users/{id}` | list and per-user detail |
 | `POST` | `/api/admin/users/{id}/{role,disable,enable,revoke}` | |
 | `POST` | `/api/admin/users/{id}/password` | generate one, shown once; ends their sessions |
+| `POST` | `/api/admin/users/{id}/username` | rename; carries into the chat snapshots |
 | `DELETE` | `/api/admin/users/{id}` | destructive, cascades |
 | `GET`/`DELETE` | `/api/admin/invites[/{code}]` | list; revoke an unredeemed code |
 | `GET`/`DELETE` | `/api/admin/shares[/{token}]` | every live share; revoke any |

@@ -263,8 +263,14 @@
                   rel="noopener noreferrer"
                   class="text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-accent"
                   >{segment.text}</a
-                >{:else if segment.mention}<span
-                  class="rounded px-0.5 font-medium {segment.mention === me.username
+                >{:else if segment.mention}<!--
+                  Both halves are needed. `mentions_me` says the message named my
+                  account, which a name comparison cannot know once names can be changed
+                  and reused; the name comparison says *this* @ is the one that meant me,
+                  which a per-message flag cannot say when a message names two people.
+                --><span
+                  class="rounded px-0.5 font-medium {message.mentions_me &&
+                  segment.mention === me.username
                     ? 'bg-accent/20 text-accent'
                     : 'text-ink-300'}">{segment.text}</span
                 >{:else}{segment.text}{/if}{/each}

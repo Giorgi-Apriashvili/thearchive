@@ -77,6 +77,24 @@
 
   const roles = ['user', 'privileged', 'admin'] as const
 
+  let renaming = $state('')
+  let confirmingRename = $state(false)
+
+  async function rename() {
+    confirmingRename = false
+    error = ''
+    busy = 'username'
+    try {
+      await api.post(`/api/admin/users/${id}/username`, { username: renaming.trim() })
+      renaming = ''
+      await load()
+    } catch (e) {
+      error = e instanceof ApiError ? e.message : 'could not change the username'
+    } finally {
+      busy = ''
+    }
+  }
+
   // The only recovery path there is — nothing here sends mail. The generated password is
   // returned once and never stored, so it is held in memory until this page is left.
   let confirmingReset = $state(false)
@@ -128,6 +146,35 @@
   </p>
 
   <section class="mt-6 rounded-xl border border-ink-800 p-4">
+    <h2 class="text-sm font-medium text-ink-300">Username</h2>
+    <p class="mt-1 text-xs text-ink-500">
+      This is what they sign in with, so tell them — nothing here can. Their uploads and
+      their chat history follow the new name; their session and their password do not
+      change.
+    </p>
+    <form
+      onsubmit={(e) => {
+        e.preventDefault()
+        if (renaming.trim()) confirmingRename = true
+      }}
+      class="mt-3 flex gap-2"
+    >
+      <input
+        bind:value={renaming}
+        placeholder={user.username}
+        autocapitalize="none"
+        autocorrect="off"
+        spellcheck="false"
+        class="flex-1 rounded-lg border border-ink-700 bg-ink-950 px-3 py-1.5 text-xs outline-none focus:border-accent"
+      />
+      <button
+        disabled={busy !== '' || !renaming.trim() || renaming.trim() === user.username}
+        class="shrink-0 rounded-lg border border-ink-700 px-3 py-1.5 text-xs text-ink-300 transition hover:border-ink-500 disabled:opacity-40"
+      >Rename</button>
+    </form>
+  </section>
+
+  <section class="mt-4 rounded-xl border border-ink-800 p-4">
     <h2 class="text-sm font-medium text-ink-300">Role</h2>
     <p class="mt-1 text-xs text-ink-500">
       <code>privileged</code> grants nothing beyond <code>user</code> today — it exists so
@@ -276,6 +323,16 @@
       </ul>
     {/if}
   </section>
+
+  {#if confirmingRename}
+    <Confirm
+      title="Rename {user.username} to {renaming.trim().toLowerCase()}?"
+      body="They sign in with this name, and nothing here will tell them it changed — until you do, they cannot get back in. Their uploads and chat history will show the new name."
+      confirmLabel="Rename"
+      onConfirm={rename}
+      onCancel={() => (confirmingRename = false)}
+    />
+  {/if}
 
   {#if confirmingReset}
     <Confirm
