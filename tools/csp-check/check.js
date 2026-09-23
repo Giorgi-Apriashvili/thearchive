@@ -194,6 +194,31 @@ const PASS = 'correct-horse-battery'
     }
   })
 
+  await step('uploads: files left without a link are offered again', async () => {
+    // Uploaded straight through tus, as a tab closed before "Create link" leaves them.
+    const body = require('fs').readFileSync(PHOTO)
+    const created = await page.request.post('/files', {
+      headers: {
+        'Tus-Resumable': '1.0.0',
+        'Upload-Length': String(body.length),
+        'Upload-Metadata': `filename ${Buffer.from('left-behind.jpg').toString('base64')}`,
+      },
+    })
+    await page.request.patch(created.headers()['location'], {
+      headers: {
+        'Tus-Resumable': '1.0.0',
+        'Upload-Offset': '0',
+        'Content-Type': 'application/offset+octet-stream',
+      },
+      data: body,
+    })
+    await page.goto('/')
+    await page.getByText('left-behind.jpg').waitFor()
+    await page.getByText(/never made a link/).waitFor()
+    await page.getByRole('button', { name: /Create link for \d+ file/ }).click()
+    await page.getByText(/Link created/).waitFor()
+  })
+
   await step('control panel', async () => {
     await page.goto('/admin')
     await page.getByText('Users').first().waitFor()

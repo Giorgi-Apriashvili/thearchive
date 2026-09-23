@@ -56,6 +56,14 @@ The client side is `tus-js-client`, which handles retry and resume. Chunks are c
 16 MiB, comfortably under the server's 64 MiB request-body limit — left to its default the
 client sends the whole file in one `PATCH`, which fails on the first large video.
 
+**Finished uploads outlive their tab.** Uploading and making a link are two steps, and
+closing the tab between them used to strand the files: on disk, counted against you, and
+reachable by nothing until they expired. `GET /api/uploads` lists your finished uploads not
+yet in a link, and the Uploads page offers them again whenever it comes into view — from a
+new tab or another device — with a line saying when they will be deleted. Unfinished
+uploads are not offered: resuming one needs the file itself, which only the browser that
+picked it has.
+
 ## Storage layout
 
 ```
@@ -431,6 +439,7 @@ Two host-level details are worth planning around rather than discovering:
 | `HEAD` | `/files/{id}` | `Upload-Offset` — where to resume |
 | `PATCH` | `/files/{id}` | append at offset; on completion → blob |
 | `DELETE` | `/files/{id}` | tus termination — discard now, not at TTL |
+| `GET` | `/api/uploads` | your finished uploads not yet made into a link |
 | `POST` | `/api/shares` | bundle completed uploads into a link |
 | `GET` | `/api/shares` | list your own |
 | `DELETE` | `/api/shares/{token}` | revoke early |
