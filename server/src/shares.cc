@@ -596,6 +596,10 @@ void registerShareRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
                 Json::Value out;
                 out["token"] = token;
                 out["is_owner"] = isOwner;
+                // Lets the page link "from alice" to alice's profile for members, and
+                // leave it as plain text for someone who holds only the link — profiles
+                // are for members, and a link there would only lead to a sign-in form.
+                out["viewer_is_member"] = viewer.has_value();
                 out["title"] = share.title;
                 out["created_at"] = static_cast<Json::Int64>(share.createdAt);
                 out["expires_at"] = static_cast<Json::Int64>(share.expiresAt);

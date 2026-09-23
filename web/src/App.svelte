@@ -5,6 +5,7 @@
   import Download from './routes/Download.svelte'
   import Account from './routes/Account.svelte'
   import Privacy from './routes/Privacy.svelte'
+  import Profile from './routes/Profile.svelte'
   import Admin from './routes/admin/Admin.svelte'
   import { router } from './lib/router.svelte'
 
@@ -16,6 +17,16 @@
   const isAdminRoute = $derived(router.segments[0] === 'admin')
   const isAccountRoute = $derived(router.segments[0] === 'account')
   const isPrivacyRoute = $derived(router.path === '/privacy')
+  // /u/<username>. Decoded here once, so the page and the API see the same name.
+  const profileName = $derived.by(() => {
+    const raw = router.path.match(/^\/u\/([^/]+)\/?$/)?.[1]
+    if (!raw) return null
+    try {
+      return decodeURIComponent(raw)
+    } catch {
+      return null
+    }
+  })
 
   let me = $state<Me | null>(null)
   let ready = $state(false)
@@ -59,7 +70,15 @@
       </div>
     {/if}
   {:else if me && isAccountRoute}
-    <Account {me} />
+    <!-- Reloading the session after an edit is what puts a new picture or name into
+         the header straight away. -->
+    <Account {me} onChanged={loadSession} />
+  {:else if me && profileName}
+    <!-- Members only, like the API behind it: signed out, this falls through to the
+         sign-in page rather than showing an empty profile. -->
+    {#key profileName}
+      <Profile username={profileName} />
+    {/key}
   {:else if me}
     <Workspace {me} onSignOut={() => (me = null)} />
   {:else}

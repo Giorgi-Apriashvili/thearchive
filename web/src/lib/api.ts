@@ -14,11 +14,14 @@ export class ApiError extends Error {
 }
 
 async function request<T>(method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<T> {
+  // A Blob — a picture being uploaded — goes as it is, with the browser's own type;
+  // everything else is JSON.
+  const raw = body instanceof Blob
   const response = await fetch(path, {
     method,
     credentials: 'same-origin',
-    headers: body === undefined ? headers : { 'Content-Type': 'application/json', ...headers },
-    body: body === undefined ? undefined : JSON.stringify(body),
+    headers: body === undefined || raw ? headers : { 'Content-Type': 'application/json', ...headers },
+    body: body === undefined ? undefined : raw ? body : JSON.stringify(body),
   })
 
   if (response.status === 204) return undefined as T
@@ -44,12 +47,32 @@ export const api = {
   get: <T>(path: string, headers?: Record<string, string>) => request<T>('GET', path, undefined, headers),
   post: <T>(path: string, body?: unknown, headers?: Record<string, string>) => request<T>('POST', path, body, headers),
   patch: <T>(path: string, body?: unknown) => request<T>('PATCH', path, body),
+  put: <T>(path: string, body?: unknown) => request<T>('PUT', path, body),
   del: <T>(path: string) => request<T>('DELETE', path),
 }
 
 export interface Me {
   username: string
   role: 'user' | 'privileged' | 'admin'
+  /** Present only when set. */
+  display_name?: string
+  /** An opaque URL from the server; present only when a picture is set. */
+  avatar?: string
+}
+
+/** A member's profile, as other members see it. */
+export interface Profile {
+  username: string
+  role: string
+  joined: number
+  is_me: boolean
+  display_name?: string
+  bio?: string
+  avatar?: string
+  invited_by?: string
+  /** Rooms the viewer and this member are both in — never the rest of theirs, since
+   *  who is in a room is visible only to that room's members. */
+  shared_rooms: { id: number; name: string }[]
 }
 
 export interface ShareFile {
@@ -67,6 +90,9 @@ export interface ShareFile {
 
 export interface ShareDetail {
   token: string
+  /** Signed in: names on the page can link to profiles. Profiles are for members, so for
+   *  someone holding only the link they stay plain text. */
+  viewer_is_member?: boolean
   visibility: 'private' | 'public' 
   title: string
   created_at: number
@@ -129,6 +155,8 @@ export interface ChatRoom {
 
 export interface RoomMember {
   username: string
+  display_name?: string
+  avatar?: string
   /** Joined, or — for a pending invitation — invited. */
   since: number
   is_creator: boolean
@@ -159,6 +187,10 @@ export interface ChatMessage {
    *  The client highlights these rather than re-deriving them from the text, so what is
    *  highlighted is exactly what a notifier would act on. */
   mentions?: string[]
+  /** The author's display name and picture, live like the role. `author` stays the
+   *  username, which is what attributes the message. */
+  author_display_name?: string
+  author_avatar?: string
   /** Whether this message named *me*, answered by account rather than by comparing
    *  names — a name can be changed and then taken by someone else, so an old `@bob`
    *  may not mean today's bob. */

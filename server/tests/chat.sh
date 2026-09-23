@@ -78,7 +78,10 @@ ARCHIVE_SECURE_COOKIES=0 ARCHIVE_DATA_DIR="$DATA" ARCHIVE_PORT=$PORT \
 PID=$!
 for _ in $(seq 1 60); do curl -sf "$BASE/healthz" >/dev/null 2>&1 && break; sleep 0.25; done
 
-check "schema migrated to v12" "$(curl -s "$BASE/healthz" | jf schema)" "12"
+# At least v10, where chat arrived — not an exact version, which every later migration
+# would break without anything about chat having changed.
+[ "$(curl -s "$BASE/healthz" | jf schema)" -ge 10 ] && ok "schema includes chat (v10 or later)" \
+    || bad "schema includes chat (v10 or later)" "$(curl -s "$BASE/healthz")"
 
 curl -s -o /dev/null -c "$ALICE" -X POST "$BASE/api/auth/bootstrap" \
     -H 'Content-Type: application/json' \

@@ -3,7 +3,9 @@
   import { chat } from '../../lib/chat.svelte'
   import { chatTime } from '../../lib/format'
   import { parseMessage } from '../../lib/message'
-  import { roleColor } from '../../lib/roles'
+  import { link } from '../../lib/router.svelte'
+  import Avatar from '../../lib/Avatar.svelte'
+  import MemberName from '../../lib/MemberName.svelte'
   import Confirm from '../../lib/Confirm.svelte'
   import Members from './Members.svelte'
 
@@ -228,13 +230,21 @@
     {/if}
 
     {#each chat.messages as message (message.id)}
-      <div class="group">
-        <p class="flex items-baseline gap-2">
+      <div class="group flex gap-2.5">
+        <Avatar
+          src={message.author_departed ? undefined : message.author_avatar}
+          name={message.author}
+        />
+        <div class="min-w-0 flex-1">
+        <p class="flex items-baseline gap-2 text-xs">
           <!-- Role is carried by colour alone. Spelling the tier out beside every name
                turns a conversation into a staff list. -->
-          <span class="text-xs font-medium {roleColor(message.author_role)}">
-            {message.author}
-          </span>
+          <MemberName
+            username={message.author}
+            displayName={message.author_display_name}
+            role={message.author_role}
+            departed={message.author_departed}
+          />
           {#if message.author_departed}
             <span class="text-[10px] uppercase text-ink-700" title="This account has been deleted">
               former member
@@ -268,14 +278,17 @@
                   account, which a name comparison cannot know once names can be changed
                   and reused; the name comparison says *this* @ is the one that meant me,
                   which a per-message flag cannot say when a message names two people.
-                --><span
-                  class="rounded px-0.5 font-medium {message.mentions_me &&
+                --><a
+                  href="/u/{encodeURIComponent(segment.mention)}"
+                  onclick={(e) => link(e, `/u/${encodeURIComponent(segment.mention!)}`)}
+                  class="rounded px-0.5 font-medium hover:underline {message.mentions_me &&
                   segment.mention === me.username
                     ? 'bg-accent/20 text-accent'
-                    : 'text-ink-300'}">{segment.text}</span
+                    : 'text-ink-300'}">{segment.text}</a
                 >{:else}{segment.text}{/if}{/each}
           </p>
         {/if}
+        </div>
       </div>
     {/each}
   </div>

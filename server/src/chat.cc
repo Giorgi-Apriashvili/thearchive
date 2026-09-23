@@ -236,7 +236,8 @@ void registerChatRoutes(Database& db, Auth& auth) {
                 Json::Value invited{Json::arrayValue};
                 auto stmt = db.prepare(
                     "SELECT u.username, m.state, m.responded_at, m.invited_at, "
-                    "       r.created_by = u.id, u.role "
+                    "       r.created_by = u.id, u.role, COALESCE(u.display_name, ''), "
+                    "       COALESCE(u.avatar, ''), u.id "
                     "FROM room_members m JOIN users u ON u.id = m.user_id "
                     "JOIN rooms r ON r.id = m.room_id "
                     "WHERE m.room_id = ? AND m.state IN ('member', 'invited') "
@@ -250,6 +251,12 @@ void registerChatRoutes(Database& db, Auth& auth) {
                         stmt.columnIsNull(2) ? stmt.columnInt(3) : stmt.columnInt(2));
                     row["is_creator"] = stmt.columnInt(4) != 0;
                     row["role"] = stmt.columnText(5);
+                    if (const std::string shown = stmt.columnText(6); !shown.empty()) {
+                        row["display_name"] = shown;
+                    }
+                    if (const std::string pic = stmt.columnText(7); !pic.empty()) {
+                        row["avatar"] = avatarUrl(stmt.columnInt(8), pic);
+                    }
                     (isMember ? members : invited).append(row);
                 }
 
@@ -494,7 +501,10 @@ void registerChatRoutes(Database& db, Auth& auth) {
                     // the client comparing names. Names can be changed and then reused,
                     // so an old "@bob" may not mean today's bob.
                     "         EXISTS(SELECT 1 FROM message_mentions mn "
-                    "                WHERE mn.message_id = m.id AND mn.user_id = ?4) "
+                    "                WHERE mn.message_id = m.id AND mn.user_id = ?4), "
+                    // Profile fields, live like the role: they belong to the person now.
+                    "         COALESCE(a.display_name, ''), COALESCE(a.avatar, ''), "
+                    "         COALESCE(m.user_id, 0) "
                     "  FROM messages m LEFT JOIN users d ON d.id = m.deleted_by "
                     "  LEFT JOIN users a ON a.id = m.user_id "
                     "  WHERE m.room_id = ?1 AND m.id > ?2 ORDER BY m.id DESC LIMIT ?3"
@@ -522,6 +532,14 @@ void registerChatRoutes(Database& db, Auth& auth) {
                         message["author_departed"] = true;
                     } else {
                         message["author_role"] = stmt.columnText(7);
+                        // `author` stays the username: it is what attributes the message,
+                        // and a display name is whatever its owner chose to type.
+                        if (const std::string shown = stmt.columnText(9); !shown.empty()) {
+                            message["author_display_name"] = shown;
+                        }
+                        if (const std::string pic = stmt.columnText(10); !pic.empty()) {
+                            message["author_avatar"] = avatarUrl(stmt.columnInt(11), pic);
+                        }
                     }
                     if (stmt.columnInt(8) != 0) {
                         message["mentions_me"] = true;

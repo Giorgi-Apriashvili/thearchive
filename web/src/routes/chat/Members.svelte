@@ -2,7 +2,8 @@
   import { fade } from 'svelte/transition'
   import type { RoomMembers } from '../../lib/api'
   import { shortDate } from '../../lib/format'
-  import { roleColor } from '../../lib/roles'
+  import Avatar from '../../lib/Avatar.svelte'
+  import MemberName from '../../lib/MemberName.svelte'
 
   let {
     members,
@@ -30,7 +31,7 @@
   role="group"
   aria-label="Members of {roomName}"
   tabindex="-1"
-  class="absolute right-0 top-full z-40 mt-1 max-h-80 w-56 overflow-y-auto rounded-xl border border-ink-700 bg-ink-900 p-3 shadow-xl outline-none"
+  class="absolute right-0 top-full z-40 mt-1 max-h-80 w-72 overflow-y-auto rounded-xl border border-ink-700 bg-ink-900 p-3 shadow-xl outline-none"
   transition:fade={{ duration: 100 }}
 >
   {#if !members}
@@ -41,8 +42,11 @@
     </p>
     <ul class="mt-1.5 space-y-1">
       {#each members.members as person (person.username)}
-        <li class="flex items-baseline justify-between gap-2">
-          <span class="truncate text-sm {roleColor(person.role)}">{person.username}</span>
+        <li class="flex items-center justify-between gap-2">
+          <span class="flex min-w-0 items-center gap-2 truncate text-sm">
+            <Avatar src={person.avatar} name={person.username} size="xs" />
+            <MemberName username={person.username} displayName={person.display_name} role={person.role} />
+          </span>
           <!-- "creator" stays: it says something about this room, not about the
                account's tier, and it is the one thing the list cannot convey by colour. -->
           {#if person.is_creator}

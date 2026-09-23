@@ -125,6 +125,40 @@ const PASS = 'correct-horse-battery'
     await page.getByText('Change your password').waitFor()
   })
 
+  await step('account: edit profile and upload a picture', async () => {
+    await page.getByLabel('Display name').fill('Alice Admin')
+    await page.getByLabel('About you').fill('Keeper of the tent.\nAlso the snacks.')
+    await page.getByRole('button', { name: 'Save profile' }).click()
+    await page.getByText('Saved.').waitFor()
+    await page.setInputFiles('input[type=file][accept="image/*"]', PHOTO)
+    // The picture is shown once the session reloads with it.
+    await page.waitForFunction(() =>
+      [...document.images].some((i) => i.src.includes('/api/avatars/') && i.complete && i.naturalWidth > 0),
+    )
+  })
+
+  await step('own profile (picture, bio, rooms)', async () => {
+    await page.goto('/u/alice')
+    await page.getByText('Keeper of the tent.').waitFor()
+    await page.getByRole('heading', { name: 'Your rooms' }).waitFor()
+  })
+
+  // bob has no picture: the initials circle's colour is set with `style:`, which must go
+  // through the CSSOM and not be refused as an inline style.
+  await step("another member's profile (initials, style: binding)", async () => {
+    await page.goto('/u/bob')
+    await page.getByRole('heading', { name: 'Rooms you share' }).waitFor()
+  })
+
+  await step('chat: messages with a picture and a display name', async () => {
+    await page.goto('/chat')
+    await page.getByText('CSP test').first().click()
+    await page.getByText('Alice Admin').first().waitFor()
+    await page.waitForFunction(() =>
+      [...document.images].some((i) => i.src.includes('/api/avatars/') && i.complete && i.naturalWidth > 0),
+    )
+  })
+
   await step('control panel', async () => {
     await page.goto('/admin')
     await page.getByText('Users').first().waitFor()

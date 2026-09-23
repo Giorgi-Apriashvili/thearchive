@@ -131,6 +131,11 @@
 {/if}
 
 {#if user}
+  <a
+    href="/u/{encodeURIComponent(user.username)}"
+    onclick={(e) => link(e, `/u/${encodeURIComponent(user!.username)}`)}
+    class="float-right mt-3 text-xs text-ink-500 hover:text-ink-300"
+  >View profile</a>
   <h1 class="mt-3 text-lg font-medium">
     {user.username}
     {#if user.disabled_at}

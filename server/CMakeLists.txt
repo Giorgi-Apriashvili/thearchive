@@ -101,6 +101,7 @@ add_executable(thearchive
     src/csp.cc
     src/throttle.cc
     src/privacy.cc
+    src/profiles.cc
 )
 
 target_include_directories(thearchive PRIVATE src)
