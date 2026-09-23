@@ -1,0 +1,12 @@
+# Nothing on this site is for crawling. The sign-in page has nothing to index, and
+# everything else is either private or behind a link its owner chose to hand out —
+# photos of people's weekends, which belong in neither a search index nor a training set.
+#
+# One rule for every crawler, rather than a list of AI bots by name: a crawler with no
+# group of its own obeys this one, so it covers GPTBot, ClaudeBot, Google-Extended,
+# CCBot and every search engine, including crawlers that do not exist yet.
+#
+# This is a request, not a control. Well-behaved crawlers honour it; the real protection
+# is that shares are private by default and every link is an unguessable token.
+User-agent: *
+Disallow: /
