@@ -77,15 +77,32 @@ std::string suppliedPassword(const drogon::HttpRequestPtr& req) {
 ShareRow authoriseShare(Database& db, const Auth& auth, const std::string& token,
                         const drogon::HttpRequestPtr& req);
 
-void requireSharePassword(const ShareRow& share, const drogon::HttpRequestPtr& req) {
+void requireSharePassword(const Auth& auth, const ShareRow& share,
+                          const drogon::HttpRequestPtr& req) {
     if (share.passwordHash.empty()) {
         return;
     }
     const std::string supplied = suppliedPassword(req);
-    if (supplied.empty() || !crypto::verifyPassword(share.passwordHash, supplied)) {
+    if (supplied.empty()) {
+        // Not a guess: this is the normal first request for a protected link, which is
+        // how the download page learns to show its password box. It runs no hash and
+        // does not count against anyone.
+        throw HttpError{401, "this link requires a password"};
+    }
+
+    // A share password is checked with no account at all — the download page is public —
+    // which makes this the easiest place to guess from, and to burn Argon2 from. Same
+    // limiter as login, and the same per-client budget: one budget for guessing, however
+    // it is spent.
+    const auto client = clientAddress(req);
+    const std::string target = "share:" + std::to_string(share.id);
+    requireNotThrottled(auth.throttle(), client, target);
+    if (!crypto::verifyPassword(share.passwordHash, supplied)) {
+        auth.throttle().failed(client, target);
         // 401 rather than 403: the client can usefully retry with a credential.
         throw HttpError{401, "this link requires a password"};
     }
+    auth.throttle().succeeded(target);
 }
 
 ShareRow authoriseShare(Database& db, const Auth& auth, const std::string& token,
@@ -105,7 +122,7 @@ ShareRow authoriseShare(Database& db, const Auth& auth, const std::string& token
     const bool privileged =
         viewer && (viewer->id == share.ownerId || viewer->isAdmin());
     if (!privileged) {
-        requireSharePassword(share, req);
+        requireSharePassword(auth, share, req);
     }
     return share;
 }

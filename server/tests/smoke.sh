@@ -352,6 +352,128 @@ code=$(curl -s -o /dev/null -w '%{http_code}' -b "$JAR" -X HEAD "$BASE/files/doe
 check "unknown upload is 404" "$code" "404"
 
 echo
+echo "=== password guessing is limited ==="
+# Every request here comes from loopback, which is how production sees Caddy, so
+# X-Forwarded-For is trusted and names the client. The addresses are from the
+# documentation ranges (203.0.113.0/24, 198.51.100.0/24, 2001:db8::/32): public as far as
+# the limiter is concerned, and nobody's real address.
+#
+# The two layers are tested apart, because either could mask the other. Per-address tests
+# spread their failures over many usernames so no account is slowed; per-account tests
+# spread theirs over many addresses so no address is refused.
+login_from() {  # <client-address> <username> <password>  -> status code
+    curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/auth/login" \
+        -H 'Content-Type: application/json' -H "X-Forwarded-For: $1" \
+        -d "{\"username\":\"$2\",\"password\":\"$3\"}"
+}
+retry_after() {  # same arguments  -> the Retry-After header, or empty
+    curl -s -D - -o /dev/null -X POST "$BASE/api/auth/login" \
+        -H 'Content-Type: application/json' -H "X-Forwarded-For: $1" \
+        -d "{\"username\":\"$2\",\"password\":\"$3\"}" | hdr Retry-After
+}
+fail_many() {  # <client-address> <count> <username-prefix>
+    for n in $(seq 1 "$2"); do login_from "$1" "$3$n" wrong >/dev/null; done
+}
+
+# A dedicated account, so slowing it cannot disturb anything above.
+tinvite=$(curl -s -b "$JAR" -X POST "$BASE/api/invites" | sed -n 's/.*"code":"\([^"]*\)".*/\1/p')
+curl -s -o /dev/null -X POST "$BASE/api/auth/register" -H 'Content-Type: application/json' \
+    -d "{\"invite\":\"$tinvite\",\"username\":\"target\",\"password\":\"right-password\"}"
+
+echo "  -- per client address --"
+fail_many 203.0.113.10 10 ipuser
+check "the 11th failure from one address is refused" \
+    "$(login_from 203.0.113.10 ipuser11 wrong)" "429"
+# Refused before the password is looked at: no Argon2 is spent, and a guesser learns
+# nothing even when they happen to be right.
+check "even with the right password" "$(login_from 203.0.113.10 target right-password)" "429"
+RA=$(retry_after 203.0.113.10 target right-password)
+[ -n "$RA" ] && [ "$RA" -gt 800 ] && [ "$RA" -le 900 ] && ok "Retry-After says when (${RA}s of a 15-minute window)" \
+    || bad "Retry-After says when" "got '$RA'"
+check "another address is unaffected" "$(login_from 203.0.113.11 target right-password)" "200"
+# Successes are not guesses, however many there are.
+for n in $(seq 1 12); do c=$(login_from 203.0.113.12 target right-password); [ "$c" = 200 ] || break; done
+check "twelve correct sign-ins from one address are all allowed" "$c" "200"
+
+# The rightmost entry is the one the proxy added; anything to its left came from the client.
+check "the rightmost forwarded address is the one held to account" \
+    "$(login_from '198.51.100.1, 203.0.113.10' target right-password)" "429"
+check "a client cannot borrow another address by prepending it" \
+    "$(login_from '203.0.113.10, 198.51.100.1' target right-password)" "200"
+
+# IPv6: a subscriber is handed a whole /64, so the /64 is what is held to account.
+for n in $(seq 1 10); do login_from "2001:db8:aa:1::$n" "v6user$n" wrong >/dev/null; done
+check "a different address in the same IPv6 /64 is refused" \
+    "$(login_from 2001:db8:aa:1::ffff target right-password)" "429"
+check "the neighbouring /64 is not" "$(login_from 2001:db8:aa:2::1 target right-password)" "200"
+check "an IPv4 client on a dual-stack socket is the IPv4 address" \
+    "$(login_from ::ffff:203.0.113.10 target right-password)" "429"
+
+# The safe degradation. A private address is a network position, not a client — behind
+# Docker it can be the gateway every visitor shares — so limiting on it would lock
+# everybody out at once. Per-address limiting stands aside instead.
+fail_many 10.0.0.5 12 privuser
+check "failures from a private address never trigger the per-address limit" \
+    "$(login_from 10.0.0.5 privuser13 wrong)" "401"
+for n in $(seq 1 12); do curl -s -o /dev/null -X POST "$BASE/api/auth/login" -H 'Content-Type: application/json' \
+    -d "{\"username\":\"nofwd$n\",\"password\":\"wrong\"}"; done
+check "nor from loopback with no forwarded address at all" \
+    "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/auth/login" -H 'Content-Type: application/json' \
+       -d '{"username":"nofwd13","password":"wrong"}')" "401"
+
+echo "  -- per account --"
+# Five failures from five addresses: no address is anywhere near its limit, so what
+# follows is the per-account layer alone.
+for n in 1 2 3 4 5; do login_from "198.51.100.$((20 + n))" target wrong >/dev/null; done
+check "after five failures the account is slowed, even for the right password" \
+    "$(login_from 198.51.100.30 target right-password)" "429"
+check "for one second" "$(retry_after 198.51.100.31 target right-password)" "1"
+sleep 1.2
+check "then the right password gets in" "$(login_from 198.51.100.32 target right-password)" "200"
+check "and success spends the slowdown" "$(login_from 198.51.100.33 target wrong)" "401"
+
+for n in 1 2 3 4 5; do login_from "198.51.100.$((40 + n))" target wrong >/dev/null; done
+sleep 1.2
+login_from 198.51.100.46 target wrong >/dev/null
+check "each further failure doubles the wait" "$(retry_after 198.51.100.47 target right-password)" "2"
+sleep 2.2
+check "which also passes" "$(login_from 198.51.100.48 target right-password)" "200"
+
+# Throttling only real accounts would tell a guesser which names exist.
+for n in 1 2 3 4 5; do login_from "198.51.100.$((60 + n))" nobody-by-this-name wrong >/dev/null; done
+check "a name that does not exist is slowed exactly the same" \
+    "$(login_from 198.51.100.70 nobody-by-this-name wrong)" "429"
+
+echo "  -- change password shares the account's limit --"
+TJAR=$(mktemp)
+curl -s -o /dev/null -c "$TJAR" -X POST "$BASE/api/auth/login" -H 'Content-Type: application/json' \
+    -H 'X-Forwarded-For: 198.51.100.80' -d '{"username":"target","password":"right-password"}'
+chpw() {  # <client-address> <current>
+    curl -s -o /dev/null -w '%{http_code}' -b "$TJAR" -X POST "$BASE/api/auth/password" \
+        -H 'Content-Type: application/json' -H "X-Forwarded-For: $1" \
+        -d "{\"current_password\":\"$2\",\"new_password\":\"another-password\"}"
+}
+for n in 1 2 3 4 5; do chpw "198.51.100.$((80 + n))" wrong >/dev/null; done
+check "a stolen session cannot guess the current password unthrottled" \
+    "$(chpw 198.51.100.90 right-password)" "429"
+check "and it is the same limit as signing in" "$(login_from 198.51.100.91 target right-password)" "429"
+rm -f "$TJAR"
+
+echo "  -- the log --"
+# The username reaches the log unvalidated; a newline in it must not start a line.
+curl -s -o /dev/null -X POST "$BASE/api/auth/login" -H 'Content-Type: application/json' \
+    -H 'X-Forwarded-For: 198.51.100.99' -d '{"username":"x\nFORGED-LINE admin signed in","password":"no"}'
+sleep 0.3
+grep -qi '^forged-line' "$WORK/server.log" && bad "a username cannot forge a log line" "it did" \
+    || ok "a username cannot forge a log line"
+grep -q 'failed password for user:x?forged-line' "$WORK/server.log" \
+    && ok "the failure is logged with the newline neutralised" \
+    || bad "the failure is logged with the newline neutralised" "$(grep -i 'forged' "$WORK/server.log" | head -2)"
+grep -q 'failed password for user:ipuser1 from 203.0.113.10' "$WORK/server.log" \
+    && ok "failures are logged with the client address" \
+    || bad "failures are logged with the client address" "$(grep 'failed password' "$WORK/server.log" | head -2)"
+
+echo
 echo "=============================="
 echo " $PASS passed, $FAIL failed"
 echo "=============================="
