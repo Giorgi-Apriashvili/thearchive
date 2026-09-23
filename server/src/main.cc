@@ -124,6 +124,13 @@ int main(int, char** argv) {
         // files — a 3 GB upload arrives as many bounded PATCHes.
         drogon::app().setClientMaxBodySize(kMaxRequestBody);
 
+        // Drogon announces itself as `Server: drogon/<version>` on every response by
+        // default, which turns "is this host running something with a known hole" into a
+        // lookup rather than an investigation. Withholding it fixes nothing underneath,
+        // but there is no reason to volunteer it, and Caddy passes the upstream's header
+        // straight through.
+        drogon::app().enableServerHeader(false);
+
         // Drogon builds a 256-directory scratch tree for multipart uploads at startup,
         // relative to the working directory. Nothing here uses its multipart handling —
         // tus writes files directly — but it creates the tree regardless, and logs 256

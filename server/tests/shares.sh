@@ -410,6 +410,28 @@ check "zip of a password-protected link needs the password" \
     "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/d/$TOK3/all.zip")" "401"
 
 echo
+echo "=== no Server header ==="
+# Drogon announces `Server: drogon/<version>` by default. It is turned off in one place,
+# but responses are assembled along different paths — a file goes out via sendfile, the
+# zip is streamed, a range is a 206 — so each shape is checked rather than trusting that
+# the one switch reaches all of them.
+ZFID=$(curl -s "$BASE/api/shares/$TOKZ" | jfile 0)
+server_hdr() { curl -s -D - -o /dev/null "$@" | tr -d '\r' | grep -i '^server:' || true; }
+for shape in \
+    "json|$BASE/api/shares/$TOKZ" \
+    "error|$BASE/api/shares/no-such-token" \
+    "file|$BASE/d/$TOKZ/$ZFID" \
+    "range|-r 10-20 $BASE/d/$TOKZ/$ZFID" \
+    "stream|$BASE/d/$TOKZ/all.zip" \
+    "thumbnail|$BASE/d/$TOKP/$PFID/thumb" \
+    "head|-I $BASE/d/$TOKZ/$ZFID" \
+    "health|$BASE/healthz"; do
+    name=${shape%%|*}; args=${shape#*|}
+    # shellcheck disable=SC2086  # args deliberately word-split into curl flags
+    check "no Server header on a $name response" "$(server_hdr $args)" ""
+done
+
+echo
 echo "=== tus termination ==="
 head -c 131072 /dev/urandom > "$WORK/cancel.bin"
 CANCEL=$(sha256sum "$WORK/cancel.bin" | cut -d' ' -f1)
