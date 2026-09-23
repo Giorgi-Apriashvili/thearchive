@@ -169,13 +169,14 @@ const PASS = 'correct-horse-battery'
     )
   })
 
-  await step('profile: send a link to bob, with a note', async () => {
+  await step('profile: send two links to bob, with a note', async () => {
     await page.goto('/u/bob')
-    await page.getByRole('button', { name: 'Send a link' }).click()
+    await page.getByRole('button', { name: 'Send links' }).click()
     await page.getByRole('dialog').getByText('Night out').click()
+    await page.getByRole('dialog').getByText('Day trip').click()
     await page.getByRole('dialog').locator('textarea').fill('from the weekend')
     await page.getByRole('button', { name: 'Send', exact: true }).click()
-    await page.getByText(/^Sent “Night out”/).waitFor()
+    await page.getByText(/^Sent 2 links/).waitFor()
   })
 
   await step('inbox: bob sees what was sent to him', async () => {
@@ -183,7 +184,11 @@ const PASS = 'correct-horse-battery'
     try {
       await page.goto('/')
       await page.getByRole('heading', { name: 'Shared with you' }).waitFor()
-      await page.getByText('from the weekend').waitFor()
+      // One item: the note once, both links under it.
+      const item = page.locator('li', { hasText: 'from the weekend' })
+      await item.waitFor()
+      await item.getByText('Night out').waitFor()
+      await item.getByText('Day trip').waitFor()
     } finally {
       await page.request.post('/api/auth/login', { data: { username: 'alice', password: PASS } })
     }

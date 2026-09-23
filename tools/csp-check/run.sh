@@ -57,15 +57,21 @@ INVITE=$(curl -s -b "$JAR" -X POST "$BASE/api/invites" | python3 -c 'import sys,
 curl -s -o /dev/null -X POST "$BASE/api/auth/register" -H 'Content-Type: application/json' \
     -d "{\"invite\":\"$INVITE\",\"username\":\"bob\",\"password\":\"$PW\"}"
 
-SIZE=$(stat -c%s "$DATA/photo.jpg")
-LOC=$(curl -s -D - -o /dev/null -b "$JAR" -X POST "$BASE/files" -H "Tus-Resumable: 1.0.0" \
-      -H "Upload-Length: $SIZE" -H "Upload-Metadata: filename $(printf photo.jpg | base64 -w0)" \
-      | tr -d '\r' | awk 'tolower($1)=="location:"{print $2}')
-curl -s -o /dev/null -b "$JAR" -X PATCH "$BASE$LOC" -H "Tus-Resumable: 1.0.0" \
-    -H 'Content-Type: application/offset+octet-stream' -H 'Upload-Offset: 0' --data-binary "@$DATA/photo.jpg"
-TOKEN=$(curl -s -b "$JAR" -X POST "$BASE/api/shares" -H 'Content-Type: application/json' \
-        -d "{\"uploads\":[\"${LOC##*/}\"],\"title\":\"Night out\",\"public\":true}" \
-        | python3 -c 'import sys,json;print(json.load(sys.stdin)["token"])')
+# A link to a fresh upload of the photo, with the given title. Echoes its token.
+make_link() {
+    local size loc
+    size=$(stat -c%s "$DATA/photo.jpg")
+    loc=$(curl -s -D - -o /dev/null -b "$JAR" -X POST "$BASE/files" -H "Tus-Resumable: 1.0.0" \
+          -H "Upload-Length: $size" -H "Upload-Metadata: filename $(printf photo.jpg | base64 -w0)" \
+          | tr -d '\r' | awk 'tolower($1)=="location:"{print $2}')
+    curl -s -o /dev/null -b "$JAR" -X PATCH "$BASE$loc" -H "Tus-Resumable: 1.0.0" \
+        -H 'Content-Type: application/offset+octet-stream' -H 'Upload-Offset: 0' --data-binary "@$DATA/photo.jpg"
+    curl -s -b "$JAR" -X POST "$BASE/api/shares" -H 'Content-Type: application/json' \
+        -d "{\"uploads\":[\"${loc##*/}\"],\"title\":\"$1\",\"public\":true}" \
+        | python3 -c 'import sys,json;print(json.load(sys.stdin)["token"])'
+}
+TOKEN=$(make_link "Night out")
+make_link "Day trip" >/dev/null
 
 (cd "$HERE" && BASE=$BASE TOKEN=$TOKEN PHOTO="$DATA/photo.jpg" node check.js)
 RC=$?

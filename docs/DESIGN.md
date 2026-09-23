@@ -111,7 +111,8 @@ message_mentions(message_id → messages CASCADE, user_id → users SET NULL,
 message_shares(message_id → messages CASCADE, position,
                share_id → shares SET NULL, title)           -- links posted in chat
 share_deliveries(id, share_id → shares CASCADE, sender_id, recipient_id,
-                 note, sent_at, seen_at, UNIQUE(share_id, recipient_id))
+                 note, sent_at, seen_at, batch, position,
+                 UNIQUE(share_id, recipient_id))            -- batch: one send
 ```
 
 A **share** holds one or more files — a whole night goes out as one link. `token` is 128
@@ -454,10 +455,11 @@ Two host-level details are worth planning around rather than discovering:
 | `PATCH` | `/api/me/profile` | `{display_name?, bio?}` — only the fields present change |
 | `PUT`/`DELETE` | `/api/me/avatar` | raw image body; rendered to a 256px WebP |
 | `GET` | `/api/avatars/{id}/{version}` | the picture — members only, cached for good |
-| `POST` | `/api/shares/{token}/send` | `{username, note?}` — your own working link to one member |
+| `POST` | `/api/users/{username}/links` | `{links: [token…], note?}` — up to ten of your own working links, as one send |
+| `POST` | `/api/shares/{token}/send` | `{username, note?}` — the same, for a single link |
 | `GET` | `/api/inbox`, `/api/inbox/unread` | links sent to you; the count behind the badge |
 | `POST` | `/api/inbox/seen` | clears the badge |
-| `DELETE` | `/api/inbox/items/{id}` | dismisses one — yours only |
+| `DELETE` | `/api/inbox/items/{id}` | dismisses one send, every link in it — yours only |
 
 Every endpoint that checks a password — sign-in, change-password, and any share endpoint
 given `X-Share-Password` or `?p=` — answers `429` with `Retry-After` when the guessing
@@ -800,8 +802,15 @@ they are not in the database backups.
 ## Sending links
 
 A link can be attached to a chat message — several to one message, with or without text —
-or sent to one member from their profile, where it lands in a **Shared with you** list on
-the Uploads page with an unread badge on the tab.
+or sent to one member from their profile, up to ten at once, where they land in a **Shared
+with you** list on the Uploads page with an unread badge on the tab.
+
+**Links sent together arrive together.** One send is one inbox item: a card per link in the
+order they were picked, the note once, one count on the badge, one dismissal. Each row of
+`share_deliveries` carries the `batch` of the send it came in. And a send is all or
+nothing — every link is checked before any is delivered, so one that expired while the
+picker was open refuses the send with its reason, rather than delivering the rest and
+leaving the sender to work out which one did not go.
 
 **A link keeps its own rules.** Sending grants nothing: a members-only link opens for any
 member as it always did, and a password-protected one still needs its password. That is
@@ -819,7 +828,8 @@ says a link was there rather than silently losing what it carried.
 
 Removing a message removes its attachments too: they are part of what was said. The inbox,
 by contrast, is not history: dismissing an item deletes it, and sending the same link again
-brings it back to the top as unread rather than stacking a copy.
+moves it out of whatever item it was in and into the new one, unread, rather than showing
+it twice.
 
 **Blocks hold here as they do for invitations.** Someone who has blocked you in chat does
 not receive your links, and sending to them reports success, so the block is not disclosed

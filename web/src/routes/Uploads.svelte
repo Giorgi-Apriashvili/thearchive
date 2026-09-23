@@ -458,8 +458,10 @@
             <!-- Plain text: another member wrote it. -->
             <p class="mt-2 whitespace-pre-line break-words text-sm text-ink-300">{item.note}</p>
           {/if}
-          <div class="mt-2.5">
-            <ShareCard card={item.card} />
+          <div class="mt-2.5 flex flex-col gap-2">
+            {#each item.cards as card, i (i)}
+              <ShareCard {card} />
+            {/each}
           </div>
         </li>
       {/each}

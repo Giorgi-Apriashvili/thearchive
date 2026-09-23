@@ -328,7 +328,19 @@ CREATE TABLE share_deliveries (
 CREATE INDEX idx_deliveries_recipient ON share_deliveries(recipient_id, sent_at);
 )SQL";
 
-constexpr std::array<Migration, 14> kMigrations{{
+// Links sent together arrive together. `batch` groups the rows of one send, so the inbox
+// shows one entry with several cards and the note once, rather than the same note on
+// every link — and dismisses, counts and marks them seen as the one thing they are. Rows
+// sent before this existed become a group of one each. `position` keeps the order the
+// sender picked them in; ids cannot, since sending a link again reuses its row.
+constexpr const char* kSchemaV15 = R"SQL(
+ALTER TABLE share_deliveries ADD COLUMN batch TEXT;
+ALTER TABLE share_deliveries ADD COLUMN position INTEGER NOT NULL DEFAULT 0;
+UPDATE share_deliveries SET batch = 'solo-' || id WHERE batch IS NULL;
+CREATE INDEX idx_deliveries_batch ON share_deliveries(recipient_id, batch);
+)SQL";
+
+constexpr std::array<Migration, 15> kMigrations{{
     {1, kSchemaV1},
     {2, kSchemaV2},
     {3, kSchemaV3},
@@ -343,6 +355,7 @@ constexpr std::array<Migration, 14> kMigrations{{
     {12, kSchemaV12},
     {13, kSchemaV13},
     {14, kSchemaV14},
+    {15, kSchemaV15},
 }};
 
 }  // namespace

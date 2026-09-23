@@ -17,16 +17,19 @@
   let sentNote = $state('')
 
   async function send(links: ShareSummary[], note: string) {
-    const chosen = links[0]
-    if (!chosen || !profile) return
+    if (!links.length || !profile) return
     sendBusy = true
     sendError = ''
     try {
-      await api.post(`/api/shares/${chosen.token}/send`, { username: profile.username, note })
+      await api.post(`/api/users/${encodeURIComponent(profile.username)}/links`, {
+        links: links.map((link) => link.token),
+        note,
+      })
       sending = false
       // Deliberately not "delivered": if they have blocked you the server says the same,
       // so that a block is never disclosed, and this line must not claim more than that.
-      sentNote = `Sent “${chosen.title || 'Untitled'}”.`
+      sentNote =
+        links.length === 1 ? `Sent “${links[0].title || 'Untitled'}”.` : `Sent ${links.length} links.`
       setTimeout(() => (sentNote = ''), 5000)
     } catch (e) {
       sendError = e instanceof ApiError ? e.message : 'could not send that'
@@ -95,7 +98,7 @@
             sending = true
           }}
           class="rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-ink-950 transition hover:bg-accent-dim"
-        >Send a link</button>
+        >Send links</button>
         {#if sentNote}<span class="text-xs text-ink-500">{sentNote}</span>{/if}
       </div>
     {/if}
@@ -145,8 +148,9 @@
 
 {#if sending && profile}
   <SharePicker
-    title="Send a link to {profile.display_name || profile.username}"
+    title="Send links to {profile.display_name || profile.username}"
     confirmLabel="Send"
+    multiple
     withNote
     busy={sendBusy}
     error={sendError}

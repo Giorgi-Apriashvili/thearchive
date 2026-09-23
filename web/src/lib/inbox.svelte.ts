@@ -65,7 +65,7 @@ class InboxStore {
     }
   }
 
-  async dismiss(id: number) {
+  async dismiss(id: string) {
     try {
       await api.del(`/api/inbox/items/${id}`)
       this.items = (this.items ?? []).filter((item) => item.id !== id)
