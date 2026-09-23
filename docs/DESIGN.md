@@ -62,9 +62,13 @@ client sends the whole file in one `PATCH`, which fails on the first large video
 <data dir>/
 ├── incoming/                  in-progress uploads, named by upload id
 ├── blobs/ab/cd/<sha256>       completed, content-addressed
-├── db/archive.db              SQLite (WAL mode)
-└── compose/                   docker-compose.yml, Caddyfile, .env
+├── thumbs/ab/cd/<sha256>-{sm,lg}.webp   previews, same fan-out as blobs
+└── db/archive.db              SQLite (WAL mode)
 ```
+
+Deployment configuration is not in here. `docker-compose.yml`, `.env` and
+`caddy/Caddyfile` live in the repository's `deploy/`, so they arrive with `git pull`
+while the data directory is only ever written by the running app.
 
 Blobs are **content-addressed by SHA-256**, which buys deduplication for free. When four
 people upload the same 800 MB video from the same night, it occupies 800 MB once. A

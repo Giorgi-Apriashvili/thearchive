@@ -114,28 +114,25 @@ request, and ACME needs port 80 reachable.
 Afterwards, every update is:
 
 ```bash
-cd /srv/thearchive && git pull && docker compose -f deploy/docker-compose.yml up -d --build
+cd /srv/thearchive && git pull \
+  && docker compose -f deploy/docker-compose.yml up -d --build \
+  && docker compose -f deploy/docker-compose.yml exec caddy \
+       caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
 ```
 
 Schema migrations run automatically at startup, so there is no separate migration step.
 
-**Changes to `deploy/Caddyfile` are the exception.** The file is bind-mounted on its own,
-and a single-file bind mount is pinned to the file's inode — but `git pull` replaces a
-changed file with a new one, so the running container keeps reading the old config. The
-update command above does not help either: `up -d` only recreates containers whose
-compose definition changed. Neither fails; the edit is silently ignored. After pulling a
-Caddyfile change, validate it and restart Caddy so the mount is re-resolved:
+The last line is what applies changes to `deploy/caddy/Caddyfile`, with no restart and no
+moment without HTTPS. It runs on every update rather than only when the Caddyfile
+changed, because it is safe to: a reload validates the new config first, and if it is
+broken the command fails and Caddy **keeps serving the old one**. `up -d` alone would not
+apply a Caddyfile edit — it only recreates containers whose compose definition changed.
 
-```bash
-cd /srv/thearchive/deploy
-docker run --rm -e ARCHIVE_DOMAIN=example.com -v "$PWD/Caddyfile:/etc/caddy/Caddyfile:ro" \
-    caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
-docker compose restart caddy
-```
+The Caddyfile sits in a directory of its own, and the directory is what gets mounted,
+not the file. That is deliberate: `git pull` replaces a changed file with a new inode,
+and a single-file bind mount stays pinned to the old one, so the container would keep
+reading the previous config and a reload would re-apply it and report success.
 
-`caddy reload` is not enough on its own, for the same reason — it would re-read the stale
-file and report success. The restart costs a second or two without HTTPS; certificates
-live in the `caddy_data` volume and are not re-issued.
 Only `deploy/.env` is host-specific; nothing else in the repo needs editing per
 deployment.
 
