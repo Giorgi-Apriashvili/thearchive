@@ -12,6 +12,7 @@
 #include "csp.h"
 #include "db.h"
 #include "gc.h"
+#include "privacy.h"
 #include "shares.h"
 #include "storage.h"
 #include "thumbnail.h"
@@ -68,6 +69,7 @@ int main(int, char** argv) {
         archive::registerAdminRoutes(db, auth, dataDir);
         archive::registerChatRoutes(db, auth);
         archive::registerContentSecurityPolicy();
+        archive::registerPrivacyRoutes();
         archive::scheduleGarbageCollection(db, dataDir);
 
         LOG_INFO << "public base url " << archive::publicBaseUrl();

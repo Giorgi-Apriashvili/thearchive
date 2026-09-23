@@ -22,6 +22,10 @@ struct GcStats {
 // without a grace period would delete files out from under a user mid-flow.
 std::int64_t blobGraceSeconds();
 
+// Seconds between sweeps. An expired link's files go at the next one, so this bounds
+// how long they outlive the link — which is why the privacy notice reads it.
+std::int64_t gcIntervalSeconds();
+
 // One full pass. Safe to call concurrently with serving traffic; each step is
 // individually transactional.
 GcStats runGarbageCollection(Database& db, const std::filesystem::path& dataDir);

@@ -23,8 +23,6 @@ namespace {
 
 namespace fs = std::filesystem;
 
-constexpr int kDefaultExpiryDays = 30;
-constexpr int kMaxExpiryDays = 365;
 constexpr int kMaxFilesPerShare = 500;
 
 struct ShareRow {
@@ -360,7 +358,8 @@ int clampExpiryDays(const Json::Value& json) {
     }
     const int days = json["expires_days"].asInt();
     if (days < 1 || days > kMaxExpiryDays) {
-        throw HttpError{400, "expires_days must be between 1 and 365"};
+        throw HttpError{400, "expires_days must be between 1 and " +
+                                 std::to_string(kMaxExpiryDays)};
     }
     return days;
 }

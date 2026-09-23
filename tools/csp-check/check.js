@@ -48,6 +48,13 @@ const PASS = 'correct-horse-battery'
     await page.getByText('Sign in', { exact: false }).first().waitFor()
   })
 
+  // Reached with no session, through the link on the sign-in page — which is how someone
+  // without an account finds it. Also the first page here with a component <style> block.
+  await step('privacy notice, from the sign-in page, signed out', async () => {
+    await page.getByRole('link', { name: 'Privacy' }).click()
+    await page.getByRole('heading', { name: 'How long it is kept' }).waitFor()
+  })
+
   await page.request.post('/api/auth/login', { data: { username: 'alice', password: PASS } })
 
   await step('uploads page, storage bar (style= binding)', async () => {
@@ -139,6 +146,12 @@ const PASS = 'correct-horse-battery'
       [...document.images].some((i) => i.src.includes('/thumb') && i.complete && i.naturalWidth > 0),
     )
     await page.keyboard.press('Escape')
+  })
+
+  await step('privacy notice, from a download page footer', async () => {
+    await page.goto(`/d/${TOKEN}`)
+    await page.getByRole('link', { name: 'Privacy' }).click()
+    await page.getByRole('heading', { name: 'Who can see it' }).waitFor()
   })
 
   // The control. An inline style attribute set through the DOM is exactly what the

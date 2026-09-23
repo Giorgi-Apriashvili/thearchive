@@ -1,5 +1,6 @@
 <script lang="ts">
   import { api, ApiError } from '../lib/api'
+  import { link } from '../lib/router.svelte'
 
   let { onSignedIn }: { onSignedIn: () => void } = $props()
 
@@ -136,5 +137,9 @@
         {mode === 'login' ? 'Have an invite code?' : 'Already have an account?'}
       </button>
     {/if}
+
+    <p class="mt-10 text-xs">
+      <a href="/privacy" onclick={(e) => link(e, '/privacy')} class="text-ink-500 underline-offset-2 hover:text-ink-300 hover:underline">Privacy</a>
+    </p>
   </div>
 </div>

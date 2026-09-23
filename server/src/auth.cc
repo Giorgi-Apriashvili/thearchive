@@ -10,7 +10,6 @@
 namespace archive {
 namespace {
 
-constexpr int kSessionDays = 30;
 constexpr std::size_t kMinPasswordLength = 6;
 
 }  // namespace

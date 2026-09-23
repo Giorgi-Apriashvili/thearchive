@@ -80,6 +80,10 @@ Configuration is environment-only, so nothing needs mounting into the container:
 | `ARCHIVE_GC_INTERVAL_SECONDS` | 900 | expiry sweep cadence |
 | `ARCHIVE_BLOB_GRACE_SECONDS` | 86400 | how long an unreferenced blob is kept — see DESIGN.md |
 | `ARCHIVE_WEB_ROOT` | unset | built frontend to serve; unset means API-only |
+| `ARCHIVE_OPERATOR_NAME` | unset | who runs the site, for the privacy notice |
+| `ARCHIVE_OPERATOR_CONTACT` | unset | where to reach them about personal data |
+| `ARCHIVE_HOSTING_LOCATION` | unset | optional; stated in the notice as where data is kept |
+| `ARCHIVE_BACKUP_DAYS` | 14 | backup retention — applied by `deploy/backup.sh`, stated by the notice |
 
 ## Tests
 
@@ -115,9 +119,16 @@ First time:
 
 ```bash
 git clone <repo> /srv/thearchive && cd /srv/thearchive/deploy
-cp .env.example .env && $EDITOR .env      # domain, data dir, uid/gid
+cp .env.example .env && $EDITOR .env      # domain, data dir, uid/gid, operator
 docker compose up -d --build
+./install-backup-timer.sh                 # daily database backups, pruned to the retention period
 ```
+
+`ARCHIVE_OPERATOR_NAME` and `ARCHIVE_OPERATOR_CONTACT` fill in "who runs this" on the
+privacy notice at `/privacy`. They belong in `.env` rather than the source because the
+source is public. The backup timer is a systemd user unit, so it needs lingering
+(`loginctl enable-linger $USER`) to keep running after you log out; the script warns if
+it is off. Backups need `sqlite3` on the host.
 
 The domain must already resolve to the host — Caddy obtains a certificate on first
 request, and ACME needs port 80 reachable.
@@ -125,13 +136,18 @@ request, and ACME needs port 80 reachable.
 Afterwards, every update is:
 
 ```bash
-cd /srv/thearchive && git pull \
+cd /srv/thearchive && deploy/backup.sh && git pull \
   && docker compose -f deploy/docker-compose.yml up -d --build \
   && docker compose -f deploy/docker-compose.yml exec caddy \
        caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
 ```
 
 Schema migrations run automatically at startup, so there is no separate migration step.
+
+The first line takes a verified database backup before anything changes. Migrations are
+one-way, so that copy is the way back if an update goes wrong. It also prunes backups
+past `ARCHIVE_BACKUP_DAYS`, as the daily timer does. The privacy notice states that period,
+so it has to be true.
 
 The last line is what applies changes to `deploy/caddy/Caddyfile`, with no restart and no
 moment without HTTPS. It runs on every update rather than only when the Caddyfile

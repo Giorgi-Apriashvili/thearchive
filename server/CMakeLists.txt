@@ -100,6 +100,7 @@ add_executable(thearchive
     src/chat.cc
     src/csp.cc
     src/throttle.cc
+    src/privacy.cc
 )
 
 target_include_directories(thearchive PRIVATE src)
