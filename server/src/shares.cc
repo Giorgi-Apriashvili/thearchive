@@ -375,6 +375,80 @@ std::string publicBaseUrl() {
     return base;
 }
 
+Json::Value shareCard(Database& db, std::int64_t shareId) {
+    auto stmt = db.prepare(
+        "SELECT token, COALESCE(title, ''), expires_at, deleted_at IS NOT NULL, "
+        "       released_at IS NOT NULL, password_hash IS NOT NULL, max_downloads, "
+        "       download_count, visibility "
+        "FROM shares WHERE id = ?");
+    stmt.bind(1, shareId);
+    Json::Value card;
+    if (!stmt.step()) {
+        card["state"] = "gone";
+        return card;
+    }
+
+    const std::string token = stmt.columnText(0);
+    const bool passwordProtected = stmt.columnInt(5) != 0;
+    std::string state = "live";
+    if (stmt.columnInt(3) != 0) {
+        state = "revoked";
+    } else if (stmt.columnInt(4) != 0 || stmt.columnInt(2) <= nowSeconds()) {
+        state = "expired";
+    } else if (!stmt.columnIsNull(6) && stmt.columnInt(7) >= stmt.columnInt(6)) {
+        state = "used_up";
+    }
+
+    card["state"] = state;
+    card["title"] = stmt.columnText(1);
+    card["expires_at"] = static_cast<Json::Int64>(stmt.columnInt(2));
+    card["password_protected"] = passwordProtected;
+    card["visibility"] = stmt.columnText(8);
+    card["previews"] = Json::Value{Json::arrayValue};
+    // A link that no longer works has no address worth handing out, and its files are
+    // gone: an expired share has already released them.
+    if (state != "live") {
+        card["file_count"] = 0;
+        card["total_bytes"] = 0;
+        return card;
+    }
+    card["token"] = token;
+
+    auto totals = db.prepare(
+        "SELECT COUNT(*), COALESCE(SUM(size), 0) FROM share_files WHERE share_id = ?");
+    totals.bind(1, shareId);
+    totals.step();
+    card["file_count"] = static_cast<Json::Int64>(totals.columnInt(0));
+    card["total_bytes"] = static_cast<Json::Int64>(totals.columnInt(1));
+
+    if (!passwordProtected) {
+        auto previews = db.prepare(
+            "SELECT sf.id FROM share_files sf JOIN blobs b ON b.sha256 = sf.blob_sha256 "
+            "WHERE sf.share_id = ? AND b.thumb = 1 ORDER BY sf.id LIMIT 4");
+        previews.bind(1, shareId);
+        while (previews.step()) {
+            card["previews"].append("/d/" + token + "/" + std::to_string(previews.columnInt(0)) +
+                                    "/thumb?s=sm");
+        }
+    }
+    return card;
+}
+
+std::int64_t requireOwnLiveShare(Database& db, const std::string& token, std::int64_t userId) {
+    auto stmt = db.prepare(
+        "SELECT id, deleted_at IS NULL AND released_at IS NULL AND expires_at > ? "
+        "       AND (max_downloads IS NULL OR download_count < max_downloads) "
+        "FROM shares WHERE token = ? AND owner_id = ?");
+    stmt.bind(1, nowSeconds()).bind(2, token).bind(3, userId);
+    if (!stmt.step()) {
+        throw HttpError{404, "no such link of yours"};
+    }
+    if (stmt.columnInt(1) == 0) {
+        throw HttpError{409, "that link has expired, been revoked or been used up"};
+    }
+    return stmt.columnInt(0);
+}
+
 void registerShareRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
     auto& app = drogon::app();
 

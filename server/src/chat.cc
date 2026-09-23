@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "httputil.h"
+#include "shares.h"
 
 namespace archive {
 namespace {
@@ -16,6 +17,7 @@ namespace {
 constexpr std::size_t kMaxBodyChars = 4000;
 constexpr std::size_t kMaxNameChars = 60;
 constexpr int kMaxMessagesPerFetch = 200;
+constexpr Json::ArrayIndex kMaxSharesPerMessage = 10;
 
 std::int64_t parseId(const std::string& raw, const char* what) {
     try {
@@ -427,13 +429,48 @@ void registerChatRoutes(Database& db, Auth& auth) {
 
                 if (req->method() == drogon::Post) {
                     std::shared_ptr<Json::Value> holder;
-                    const std::string body =
-                        trimmed(requireString(requireJson(req, holder), "body"));
-                    if (body.empty()) {
-                        throw HttpError{400, "a message cannot be empty"};
+                    const Json::Value& json = requireJson(req, holder);
+                    if (json.isMember("body") && !json["body"].isString()) {
+                        throw HttpError{400, "body must be text"};
                     }
+                    const std::string body = trimmed(json.get("body", "").asString());
                     if (body.size() > kMaxBodyChars) {
                         throw HttpError{400, "a message is at most 4000 characters"};
+                    }
+
+                    // Links to attach: the sender's own, still working, each once. All
+                    // checked before anything is written, so a stale link is refused with
+                    // a reason rather than leaving half a message behind.
+                    std::vector<std::pair<std::int64_t, std::string>> attached;  // id, title
+                    if (json.isMember("shares")) {
+                        const Json::Value& tokens = json["shares"];
+                        if (!tokens.isArray()) {
+                            throw HttpError{400, "shares must be a list of links"};
+                        }
+                        if (tokens.size() > kMaxSharesPerMessage) {
+                            throw HttpError{400, "a message carries at most " +
+                                                     std::to_string(kMaxSharesPerMessage) +
+                                                     " links"};
+                        }
+                        for (const Json::Value& token : tokens) {
+                            if (!token.isString()) {
+                                throw HttpError{400, "shares must be a list of links"};
+                            }
+                            const std::int64_t shareId =
+                                requireOwnLiveShare(db, token.asString(), user.id);
+                            if (std::any_of(attached.begin(), attached.end(),
+                                            [&](const auto& a) { return a.first == shareId; })) {
+                                continue;
+                            }
+                            auto title = db.prepare(
+                                "SELECT COALESCE(title, '') FROM shares WHERE id = ?");
+                            title.bind(1, shareId);
+                            title.step();
+                            attached.emplace_back(shareId, title.columnText(0));
+                        }
+                    }
+                    if (body.empty() && attached.empty()) {
+                        throw HttpError{400, "a message needs some text or a link"};
                     }
 
                     Transaction tx{db};
@@ -448,6 +485,15 @@ void registerChatRoutes(Database& db, Auth& auth) {
                     // but not yet indexed for mentions is a notification that silently
                     // never fires.
                     recordMentions(db, messageId, roomId, body);
+
+                    int position = 0;
+                    for (const auto& [shareId, title] : attached) {
+                        auto link = db.prepare(
+                            "INSERT INTO message_shares (message_id, position, share_id, title) "
+                            "VALUES (?, ?, ?, ?)");
+                        link.bind(1, messageId).bind(2, std::int64_t{position++})
+                            .bind(3, shareId).bind(4, title).run();
+                    }
 
                     // Your own message is read by definition.
                     auto read = db.prepare(
@@ -571,6 +617,35 @@ void registerChatRoutes(Database& db, Auth& auth) {
                     }
                 }
 
+                // Links carried by these messages, as cards resolved now: whether a link
+                // still works belongs to the link, not to the moment it was posted.
+                if (!positions.empty()) {
+                    auto links = db.prepare(
+                        "SELECT ms.message_id, ms.share_id, ms.title "
+                        "FROM message_shares ms JOIN messages m ON m.id = ms.message_id "
+                        "WHERE m.room_id = ? AND ms.message_id BETWEEN ? AND ? "
+                        "ORDER BY ms.message_id, ms.position");
+                    links.bind(1, roomId).bind(2, lowest).bind(3, highest);
+                    while (links.step()) {
+                        const auto found = positions.find(links.columnInt(0));
+                        if (found == positions.end()) {
+                            continue;
+                        }
+                        Json::Value card;
+                        if (links.columnIsNull(1)) {
+                            // The link's owner deleted their account and the link with
+                            // it; the title is what is left to say what was here.
+                            card["state"] = "gone";
+                        } else {
+                            card = shareCard(db, links.columnInt(1));
+                        }
+                        if (card["state"].asString() == "gone") {
+                            card["title"] = links.columnText(2);
+                        }
+                        messages[found->second]["shares"].append(card);
+                    }
+                }
+
                 Json::Value out;
                 out["messages"] = messages;
                 auto resp = drogon::HttpResponse::newHttpJsonResponse(out);
@@ -633,6 +708,9 @@ void registerChatRoutes(Database& db, Auth& auth) {
                 }
                 auto mentions = db.prepare("DELETE FROM message_mentions WHERE message_id = ?");
                 mentions.bind(1, messageId).run();
+                // Links it carried are part of what was said, so they go too.
+                auto links = db.prepare("DELETE FROM message_shares WHERE message_id = ?");
+                links.bind(1, messageId).run();
                 tx.commit();
                 Json::Value out;
                 out["deleted"] = true;

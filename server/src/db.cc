@@ -294,7 +294,41 @@ ALTER TABLE users ADD COLUMN bio TEXT;
 ALTER TABLE users ADD COLUMN avatar TEXT;
 )SQL";
 
-constexpr std::array<Migration, 13> kMigrations{{
+// Links posted in chat, and links sent to one member's inbox.
+//
+// message_shares follows chat's rule that history is permanent: a link's own row goes
+// only when its owner's account is deleted, and then share_id drops to NULL with the
+// title kept, so the message reads "a link that no longer exists" rather than silently
+// losing what it carried. Whether a link *works* is never stored — it is resolved when
+// the message is read (shareCard), so one posted last month shows as expired.
+//
+// share_deliveries is an inbox, not history: dismissing an item deletes it, and it goes
+// with either person's account or with the share. One row per link per recipient —
+// sending the same link again brings it back to the top rather than stacking copies.
+constexpr const char* kSchemaV14 = R"SQL(
+CREATE TABLE message_shares (
+    message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    position   INTEGER NOT NULL,
+    share_id   INTEGER          REFERENCES shares(id) ON DELETE SET NULL,
+    title      TEXT    NOT NULL,     -- snapshot, for when the link is gone entirely
+    PRIMARY KEY (message_id, position)
+);
+
+CREATE TABLE share_deliveries (
+    id           INTEGER PRIMARY KEY,
+    share_id     INTEGER NOT NULL REFERENCES shares(id) ON DELETE CASCADE,
+    sender_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    recipient_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    note         TEXT,
+    sent_at      INTEGER NOT NULL,
+    seen_at      INTEGER,
+    UNIQUE (share_id, recipient_id)
+);
+-- The inbox query and its unread badge, polled every ten seconds.
+CREATE INDEX idx_deliveries_recipient ON share_deliveries(recipient_id, sent_at);
+)SQL";
+
+constexpr std::array<Migration, 14> kMigrations{{
     {1, kSchemaV1},
     {2, kSchemaV2},
     {3, kSchemaV3},
@@ -308,6 +342,7 @@ constexpr std::array<Migration, 13> kMigrations{{
     {11, kSchemaV11},
     {12, kSchemaV12},
     {13, kSchemaV13},
+    {14, kSchemaV14},
 }};
 
 }  // namespace

@@ -94,6 +94,7 @@ Each drives a real server over HTTP; none needs a fixture or a mock.
 ./server/tests/shares.sh   # shares, downloads, ranges, expiry sweep
 ./server/tests/chat.sh     # rooms, invitations, blocks, admin removal
 ./server/tests/profiles.sh # profiles, pictures and what a picture keeps of its original
+./server/tests/sending.sh  # links attached in chat and sent to someone's inbox
 ```
 
 After any **frontend** change, also run the browser check before deploying:

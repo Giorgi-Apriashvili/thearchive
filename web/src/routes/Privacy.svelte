@@ -107,6 +107,11 @@
             password if you set one — again only as a hash.
           </li>
           <li>
+            <strong>Links you send:</strong> which of your links you sent to whom, when, with
+            any note, and whether they have looked at it yet; and which links you attached to
+            chat messages.
+          </li>
+          <li>
             <strong>Chat:</strong> your messages, the rooms, invitations and how you answered
             them, anyone you have blocked, who a message @mentioned, and how far you have read.
           </li>
@@ -139,6 +144,13 @@
             only has a link. A profile lists the chat rooms its viewer shares with you, not all
             of yours. Your username is always shown beside your display name, so nobody can pass
             as you by choosing the same one.
+          </li>
+          <li>
+            <strong>Links you send</strong> are seen by the person you send them to, and links
+            you attach in chat by that room's members — their title, size, and small previews of
+            their images. Sending a link changes nothing about who can open it: a members-only
+            link opens for any member, and one with a password still needs it. Someone who has
+            blocked you in chat does not receive links from you either.
           </li>
           <li>
             <strong>Chat:</strong> every member can see the names of all rooms; what is said in a
@@ -176,7 +188,13 @@
             <strong>Chat is kept permanently.</strong> If an account is deleted, its messages stay
             in their rooms under the name the person last had, so conversations remain readable.
             Administrators can remove individual messages: a removed message is replaced by a
-            marker saying who removed it, and its text is erased.
+            marker saying who removed it, and its text, and any links it carried, are removed.
+          </li>
+          <li>
+            <strong>Links sent to you</strong> stay in your list until you dismiss them, or until
+            the sender's account is deleted. Links attached to a chat message stay with it, since
+            chat is kept permanently; once a link expires the message says so instead of offering
+            it.
           </li>
           <li>
             <strong>Your profile</strong> stays until you change it or your account is deleted.

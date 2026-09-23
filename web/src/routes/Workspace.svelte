@@ -1,6 +1,7 @@
 <script lang="ts">
   import { api, type Me } from '../lib/api'
   import { chat } from '../lib/chat.svelte'
+  import { inbox } from '../lib/inbox.svelte'
   import { link, router } from '../lib/router.svelte'
   import Confirm from '../lib/Confirm.svelte'
   import Avatar from '../lib/Avatar.svelte'
@@ -18,6 +19,8 @@
   // tab is the only way someone on Uploads learns a message arrived. One request every
   // ten seconds against an indexed count is the price.
   $effect(() => chat.watch())
+  // Likewise the inbox count, behind the badge on the Uploads tab.
+  $effect(() => inbox.watch())
 
   let inviteCode = $state('')
   let confirmingInvite = $state(false)
@@ -82,10 +85,18 @@
     <a
       href="/"
       onclick={(e) => link(e, '/')}
-      class="-mb-px border-b-2 px-3 py-2 transition {tab === 'uploads'
+      class="-mb-px flex items-center gap-1.5 border-b-2 px-3 py-2 transition {tab === 'uploads'
         ? 'border-accent text-ink-100'
         : 'border-transparent text-ink-500 hover:text-ink-300'}"
-    >Uploads</a>
+    >
+      Uploads
+      {#if inbox.unread > 0 && tab !== 'uploads'}
+        <span
+          class="tnum rounded-full bg-accent px-1.5 text-[10px] font-medium text-ink-950"
+          title="{inbox.unread} link{inbox.unread === 1 ? '' : 's'} sent to you"
+        >{inbox.unread}</span>
+      {/if}
+    </a>
     <a
       href="/chat"
       onclick={(e) => link(e, '/chat')}
@@ -112,7 +123,7 @@
        Chat mid-upload would silently cost someone a 3 GB video. Chat, by contrast, is
        unmounted when it is not shown, which is what stops its polling. -->
   <div class:hidden={tab !== 'uploads'}>
-    <Uploads />
+    <Uploads visible={tab === 'uploads'} />
   </div>
 
   {#if tab === 'chat'}

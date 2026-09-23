@@ -12,6 +12,7 @@
 #include "csp.h"
 #include "db.h"
 #include "gc.h"
+#include "inbox.h"
 #include "privacy.h"
 #include "profiles.h"
 #include "shares.h"
@@ -72,6 +73,7 @@ int main(int, char** argv) {
         archive::registerContentSecurityPolicy();
         archive::registerPrivacyRoutes();
         archive::registerProfileRoutes(db, auth, dataDir);
+        archive::registerInboxRoutes(db, auth);
         archive::scheduleGarbageCollection(db, dataDir);
 
         LOG_INFO << "public base url " << archive::publicBaseUrl();

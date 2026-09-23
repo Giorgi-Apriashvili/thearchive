@@ -1,17 +1,23 @@
 <script lang="ts">
-  import { api, ApiError, type ChatMessage, type ChatRoom, type Me } from '../../lib/api'
+  import { api, ApiError, type ChatMessage, type ChatRoom, type Me, type ShareSummary } from '../../lib/api'
   import { chat } from '../../lib/chat.svelte'
   import { chatTime } from '../../lib/format'
   import { parseMessage } from '../../lib/message'
   import { link } from '../../lib/router.svelte'
   import Avatar from '../../lib/Avatar.svelte'
   import MemberName from '../../lib/MemberName.svelte'
+  import ShareCard from '../../lib/ShareCard.svelte'
+  import SharePicker from '../../lib/SharePicker.svelte'
+  import LockIcon from '../../lib/LockIcon.svelte'
   import Confirm from '../../lib/Confirm.svelte'
   import Members from './Members.svelte'
 
   let { room, me }: { room: ChatRoom; me: Me } = $props()
 
   let draft = $state('')
+  // Links to go with the next message, chosen through the picker.
+  let attachments = $state<ShareSummary[]>([])
+  let picking = $state(false)
   let sending = $state(false)
   let error = $state('')
 
@@ -95,12 +101,16 @@
   async function send(event: SubmitEvent) {
     event.preventDefault()
     const body = draft.trim()
-    if (!body || sending) return
+    if ((!body && attachments.length === 0) || sending) return
     error = ''
     sending = true
     try {
-      await api.post(`/api/chat/rooms/${room.id}/messages`, { body })
+      await api.post(`/api/chat/rooms/${room.id}/messages`, {
+        body,
+        shares: attachments.map((a) => a.token),
+      })
       draft = ''
+      attachments = []
       mentionQuery = null
       pinned = true
       await chat.refresh()
@@ -266,6 +276,7 @@
           <!-- Rendered as segments, never {@html}. linkify() returns data precisely so
                that Svelte keeps escaping both the text and the href — this is the one
                place in the app where another person's arbitrary text reaches the DOM. -->
+          {#if message.body}
           <p class="mt-0.5 whitespace-pre-wrap break-words text-sm text-ink-100">
             {#each parseMessage(message.body ?? '', message.mentions ?? []) as segment}{#if segment.href}<a
                   href={segment.href}
@@ -287,6 +298,14 @@
                     : 'text-ink-300'}">{segment.text}</a
                 >{:else}{segment.text}{/if}{/each}
           </p>
+          {/if}
+          {#if message.shares?.length}
+            <div class="mt-1.5 flex flex-col gap-1.5">
+              {#each message.shares as card, i (i)}
+                <ShareCard {card} />
+              {/each}
+            </div>
+          {/if}
         {/if}
         </div>
       </div>
@@ -300,7 +319,24 @@
     <p class="border-t border-ink-800 px-4 py-2 text-xs text-red-400">{error}</p>
   {/if}
 
-  <form onsubmit={send} class="relative flex items-end gap-2 border-t border-ink-800 px-4 py-3">
+  <div class="border-t border-ink-800 px-4 py-3">
+  {#if attachments.length}
+    <ul class="mb-2 flex flex-wrap gap-1.5">
+      {#each attachments as link (link.token)}
+        <li class="flex items-center gap-1.5 rounded-lg border border-ink-700 bg-ink-900 py-1 pl-2.5 pr-1.5 text-xs text-ink-300">
+          {#if link.password_protected}<span class="text-ink-500" title="Password protected"><LockIcon size={11} /></span>{/if}
+          <span class="max-w-48 truncate">{link.title || 'Untitled'}</span>
+          <button
+            type="button"
+            aria-label="Remove {link.title || 'this link'}"
+            onclick={() => (attachments = attachments.filter((a) => a.token !== link.token))}
+            class="px-1 text-ink-500 hover:text-ink-100"
+          >×</button>
+        </li>
+      {/each}
+    </ul>
+  {/if}
+  <form onsubmit={send} class="relative flex items-end gap-2">
     {#if candidates.length}
       <ul
         class="absolute bottom-full left-4 z-20 mb-1 w-48 overflow-hidden rounded-lg border border-ink-700 bg-ink-900 shadow-xl"
@@ -323,6 +359,13 @@
         {/each}
       </ul>
     {/if}
+    <button
+      type="button"
+      onclick={() => (picking = true)}
+      title="Attach your links"
+      aria-label="Attach your links"
+      class="shrink-0 rounded-lg border border-ink-700 px-2.5 py-2 text-xs text-ink-300 transition hover:border-ink-500"
+    >+ Link</button>
     <textarea
       bind:this={composer}
       bind:value={draft}
@@ -336,11 +379,27 @@
       class="max-h-32 min-h-[2.25rem] flex-1 resize-none rounded-lg border border-ink-700 bg-ink-900 px-3 py-2 text-sm outline-none focus:border-accent"
     ></textarea>
     <button
-      disabled={sending || !draft.trim()}
+      disabled={sending || (!draft.trim() && attachments.length === 0)}
       class="shrink-0 rounded-lg bg-accent px-3 py-2 text-xs font-medium text-ink-950 transition hover:bg-accent-dim disabled:opacity-40"
     >Send</button>
   </form>
+  </div>
 </div>
+
+{#if picking}
+  <SharePicker
+    title="Attach your links"
+    confirmLabel="Attach"
+    multiple
+    onPick={(links) => {
+      // Merged with anything already attached, once each, up to the ten a message holds.
+      const known = new Set(attachments.map((a) => a.token))
+      attachments = [...attachments, ...links.filter((l) => !known.has(l.token))].slice(0, 10)
+      picking = false
+    }}
+    onCancel={() => (picking = false)}
+  />
+{/if}
 
 {#if removing}
   {@const message = removing}

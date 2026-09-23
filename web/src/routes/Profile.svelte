@@ -1,14 +1,39 @@
 <script lang="ts">
-  import { api, ApiError, type Profile } from '../lib/api'
+  import { api, ApiError, type Profile, type ShareSummary } from '../lib/api'
   import { shortDate } from '../lib/format'
   import { link } from '../lib/router.svelte'
   import { roleColor } from '../lib/roles'
   import Avatar from '../lib/Avatar.svelte'
   import MemberName from '../lib/MemberName.svelte'
+  import SharePicker from '../lib/SharePicker.svelte'
 
   let { username }: { username: string } = $props()
 
   let profile = $state<Profile | null>(null)
+
+  let sending = $state(false)
+  let sendBusy = $state(false)
+  let sendError = $state('')
+  let sentNote = $state('')
+
+  async function send(links: ShareSummary[], note: string) {
+    const chosen = links[0]
+    if (!chosen || !profile) return
+    sendBusy = true
+    sendError = ''
+    try {
+      await api.post(`/api/shares/${chosen.token}/send`, { username: profile.username, note })
+      sending = false
+      // Deliberately not "delivered": if they have blocked you the server says the same,
+      // so that a block is never disclosed, and this line must not claim more than that.
+      sentNote = `Sent “${chosen.title || 'Untitled'}”.`
+      setTimeout(() => (sentNote = ''), 5000)
+    } catch (e) {
+      sendError = e instanceof ApiError ? e.message : 'could not send that'
+    } finally {
+      sendBusy = false
+    }
+  }
   let error = $state('')
 
   // Keyed on the name, so following a link from one profile to another (an inviter, say)
@@ -62,6 +87,19 @@
       </div>
     </header>
 
+    {#if !profile.is_me}
+      <div class="mt-5 flex items-center gap-3">
+        <button
+          onclick={() => {
+            sendError = ''
+            sending = true
+          }}
+          class="rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-ink-950 transition hover:bg-accent-dim"
+        >Send a link</button>
+        {#if sentNote}<span class="text-xs text-ink-500">{sentNote}</span>{/if}
+      </div>
+    {/if}
+
     {#if profile.is_me}
       <a
         href="/account"
@@ -104,3 +142,15 @@
     </section>
   {/if}
 </div>
+
+{#if sending && profile}
+  <SharePicker
+    title="Send a link to {profile.display_name || profile.username}"
+    confirmLabel="Send"
+    withNote
+    busy={sendBusy}
+    error={sendError}
+    onPick={send}
+    onCancel={() => (sending = false)}
+  />
+{/if}
