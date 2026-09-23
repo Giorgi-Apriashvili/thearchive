@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte'
   import * as tus from 'tus-js-client'
   import {
     api,
@@ -9,8 +10,29 @@
     type ShareSummary,
     type StorageInfo,
   } from '../lib/api'
-  import { bytes, until } from '../lib/format'
+  import { bytes, chatTime, until } from '../lib/format'
+  import { inbox } from '../lib/inbox.svelte'
   import VisibilityToggle from '../lib/VisibilityToggle.svelte'
+  import Avatar from '../lib/Avatar.svelte'
+  import MemberName from '../lib/MemberName.svelte'
+  import ShareCard from '../lib/ShareCard.svelte'
+
+  // This pane stays mounted while Chat is showing, so that uploads in flight survive a
+  // tab switch. `visible` is what stops links sent to you being marked seen while you are
+  // looking at a chat room instead.
+  let { visible = true }: { visible?: boolean } = $props()
+
+  // Load the inbox when this pane is on screen, and again whenever something new arrives
+  // while it is — then mark it seen, which is what clears the badge.
+  // Reacts to visibility and the unread count only: reading `items` as tracked state would
+  // re-run this when its own load lands, loading everything twice.
+  $effect(() => {
+    if (!visible) return
+    const unread = inbox.unread
+    if (untrack(() => inbox.items === null) || unread > 0) {
+      void inbox.load().then(() => inbox.markSeen())
+    }
+  })
 
   interface Item {
     file: File
@@ -401,6 +423,48 @@
       </button>
     </div>
   </div>
+{/if}
+
+{#if inbox.items?.length}
+  <section class="mt-12">
+    <h2 class="text-sm font-medium text-ink-300">Shared with you</h2>
+    {#if inbox.error}
+      <p class="mt-2 text-xs text-red-400">{inbox.error}</p>
+    {/if}
+    <ul class="mt-3 space-y-3">
+      {#each inbox.items as item (item.id)}
+        <li
+          class="rounded-xl border px-4 py-3 {item.seen ? 'border-ink-800' : 'border-accent/40 bg-accent/5'}"
+        >
+          <div class="flex items-center justify-between gap-3">
+            <p class="flex min-w-0 items-center gap-2 text-xs text-ink-500">
+              <Avatar src={item.sender.avatar} name={item.sender.username} size="xs" />
+              <MemberName
+                username={item.sender.username}
+                displayName={item.sender.display_name}
+                role={item.sender.role}
+              />
+              <span class="tnum shrink-0">· {chatTime(item.sent_at)}</span>
+              {#if !item.seen}<span class="shrink-0 text-[10px] uppercase text-accent">new</span>{/if}
+            </p>
+            <button
+              onclick={() => inbox.dismiss(item.id)}
+              title="Remove from this list"
+              aria-label="Dismiss"
+              class="shrink-0 text-xs text-ink-500 hover:text-ink-300"
+            >Dismiss</button>
+          </div>
+          {#if item.note}
+            <!-- Plain text: another member wrote it. -->
+            <p class="mt-2 whitespace-pre-line break-words text-sm text-ink-300">{item.note}</p>
+          {/if}
+          <div class="mt-2.5">
+            <ShareCard card={item.card} />
+          </div>
+        </li>
+      {/each}
+    </ul>
+  </section>
 {/if}
 
 {#if shares.length}

@@ -195,6 +195,33 @@ export interface ChatMessage {
    *  names — a name can be changed and then taken by someone else, so an old `@bob`
    *  may not mean today's bob. */
   mentions_me?: boolean
+  /** Links attached to the message, resolved when it was read. */
+  shares?: ShareCard[]
+}
+
+/** A link as a card, in chat and the inbox. Resolved when fetched, so it says whether the
+ *  link works *now*; `token` is present only while it does. */
+export interface ShareCard {
+  state: 'live' | 'expired' | 'revoked' | 'used_up' | 'gone'
+  title?: string
+  token?: string
+  file_count?: number
+  total_bytes?: number
+  expires_at?: number
+  password_protected?: boolean
+  visibility?: 'private' | 'public'
+  /** Thumbnail URLs; always empty for a password-protected link. */
+  previews?: string[]
+}
+
+/** A link a member sent you. */
+export interface InboxItem {
+  id: number
+  sent_at: number
+  seen: boolean
+  note?: string
+  sender: { username: string; role: string; display_name?: string; avatar?: string }
+  card: ShareCard
 }
 
 export interface ChatBlocks {

@@ -159,6 +159,36 @@ const PASS = 'correct-horse-battery'
     )
   })
 
+  await step('chat: attach a link, and its card with a preview', async () => {
+    await page.getByRole('button', { name: 'Attach your links' }).click()
+    await page.getByRole('dialog').getByText('Night out').click()
+    await page.getByRole('dialog').getByRole('button', { name: 'Attach', exact: true }).click()
+    await page.getByRole('button', { name: 'Send' }).click()
+    await page.waitForFunction(() =>
+      [...document.querySelectorAll('a[href^="/d/"] img')].some((i) => i.complete && i.naturalWidth > 0),
+    )
+  })
+
+  await step('profile: send a link to bob, with a note', async () => {
+    await page.goto('/u/bob')
+    await page.getByRole('button', { name: 'Send a link' }).click()
+    await page.getByRole('dialog').getByText('Night out').click()
+    await page.getByRole('dialog').locator('textarea').fill('from the weekend')
+    await page.getByRole('button', { name: 'Send', exact: true }).click()
+    await page.getByText(/^Sent “Night out”/).waitFor()
+  })
+
+  await step('inbox: bob sees what was sent to him', async () => {
+    await page.request.post('/api/auth/login', { data: { username: 'bob', password: PASS } })
+    try {
+      await page.goto('/')
+      await page.getByRole('heading', { name: 'Shared with you' }).waitFor()
+      await page.getByText('from the weekend').waitFor()
+    } finally {
+      await page.request.post('/api/auth/login', { data: { username: 'alice', password: PASS } })
+    }
+  })
+
   await step('control panel', async () => {
     await page.goto('/admin')
     await page.getByText('Users').first().waitFor()

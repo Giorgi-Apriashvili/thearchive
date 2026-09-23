@@ -108,6 +108,10 @@ user_blocks(user_id, blocked_id, created_at, PK(user_id, blocked_id))
 
 message_mentions(message_id → messages CASCADE, user_id → users SET NULL,
                  mentioned_name, PK(message_id, mentioned_name))
+message_shares(message_id → messages CASCADE, position,
+               share_id → shares SET NULL, title)           -- links posted in chat
+share_deliveries(id, share_id → shares CASCADE, sender_id, recipient_id,
+                 note, sent_at, seen_at, UNIQUE(share_id, recipient_id))
 ```
 
 A **share** holds one or more files — a whole night goes out as one link. `token` is 128
@@ -450,6 +454,10 @@ Two host-level details are worth planning around rather than discovering:
 | `PATCH` | `/api/me/profile` | `{display_name?, bio?}` — only the fields present change |
 | `PUT`/`DELETE` | `/api/me/avatar` | raw image body; rendered to a 256px WebP |
 | `GET` | `/api/avatars/{id}/{version}` | the picture — members only, cached for good |
+| `POST` | `/api/shares/{token}/send` | `{username, note?}` — your own working link to one member |
+| `GET` | `/api/inbox`, `/api/inbox/unread` | links sent to you; the count behind the badge |
+| `POST` | `/api/inbox/seen` | clears the badge |
+| `DELETE` | `/api/inbox/items/{id}` | dismisses one — yours only |
 
 Every endpoint that checks a password — sign-in, change-password, and any share endpoint
 given `X-Share-Password` or `?p=` — answers `429` with `Retry-After` when the guessing
@@ -788,6 +796,39 @@ once. The sweep deletes any file no member points at — a deleted account's, or
 delete left behind — but not one younger than ten minutes, so it can never catch a picture
 between its file being written and the database pointing at it. Pictures are files, so
 they are not in the database backups.
+
+## Sending links
+
+A link can be attached to a chat message — several to one message, with or without text —
+or sent to one member from their profile, where it lands in a **Shared with you** list on
+the Uploads page with an unread badge on the tab.
+
+**A link keeps its own rules.** Sending grants nothing: a members-only link opens for any
+member as it always did, and a password-protected one still needs its password. That is
+why a password-protected link's card shows no previews — fetching them would need the
+password, which a card must never carry. Only your own links can be sent, and only while
+they work; a token that is not yours is answered as one that does not exist, so a guessed
+token reveals nothing.
+
+**Cards are resolved when read, not when sent.** Chat is permanent and links expire, so a
+link posted last month has to say "expired" rather than be a click that fails.
+`shareCard()` computes live / expired / revoked / used up each time, and carries the link's
+address only while it works. The one thing stored with a chat attachment is its title, for
+the case where the link's row itself is gone — its owner's account deleted — so the message
+says a link was there rather than silently losing what it carried.
+
+Removing a message removes its attachments too: they are part of what was said. The inbox,
+by contrast, is not history: dismissing an item deletes it, and sending the same link again
+brings it back to the top as unread rather than stacking a copy.
+
+**Blocks hold here as they do for invitations.** Someone who has blocked you in chat does
+not receive your links, and sending to them reports success, so the block is not disclosed
+to the one person it was made against.
+
+The badge's count is polled every ten seconds, like chat's room list, and paused while the
+tab is hidden. Items load, and are marked seen, only when the list is actually on screen —
+the Uploads pane stays mounted behind Chat so uploads survive a tab switch, and "seen"
+must not happen while someone is reading a chat room instead.
 
 ## Privacy
 

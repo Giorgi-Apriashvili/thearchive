@@ -102,6 +102,8 @@ add_executable(thearchive
     src/throttle.cc
     src/privacy.cc
     src/profiles.cc
+    src/text.cc
+    src/inbox.cc
 )
 
 target_include_directories(thearchive PRIVATE src)
