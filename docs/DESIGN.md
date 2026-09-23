@@ -281,6 +281,20 @@ without bound. Keys are truncated, since usernames reach the limiter unvalidated
 Failed checks are logged with the resolved address, or `(no public address)`. That line is
 how to confirm, on a given deployment, whether the app is seeing real client addresses.
 
+**On the production host, checked after deploying:**
+
+- **IPv4 clients are seen correctly.** A failed sign-in from outside logged the real
+  public address: Docker forwards published IPv4 ports in the kernel, which keeps the
+  source address, and Caddy passes it on. Both layers apply.
+- **IPv6 clients are not.** The site has an AAAA record, but the compose network
+  (`deploy_edge`) has IPv6 disabled, so Docker hands IPv6 connections to its userland
+  proxy and Caddy sees the proxy's private address instead of the client's. A request
+  from the host to its own IPv6 address — which crosses the same forwarding — logged
+  `(no public address)`. For IPv6 visitors the per-address layer therefore stands aside,
+  exactly as designed, and only the per-target layer applies. Enabling IPv6 on the compose
+  network would let Docker forward those in the kernel too; that is a change to
+  production networking, and has not been made.
+
 ### Renaming an account
 
 `POST /api/admin/users/{id}/username` normalises and validates the new name exactly as
