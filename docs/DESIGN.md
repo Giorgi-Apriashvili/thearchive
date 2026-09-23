@@ -467,6 +467,15 @@ do and has to change whenever the frontend does.
 The app sends no `Server` header. Drogon announces `drogon/<version>` by default, which
 turns "does this host run something with a known hole" into a lookup.
 
+`/robots.txt` disallows everything for every crawler (`web/public/robots.txt`). Before it
+existed the SPA fallback answered that path with the app's HTML and a `200`, which a
+crawler parses as a rules file with no rules — so, in effect, everything allowed. A
+single `User-agent: *` group covers GPTBot and every other AI or search crawler, including
+ones that do not exist yet, where naming bots individually would not. It is a request
+rather than a control, and it stops crawling, not listing: a search engine can still show
+a bare share URL it found linked elsewhere without fetching it. What actually protects a
+share is that it is private by default and its link is an unguessable token.
+
 Fingerprinted assets under `/assets/` are `public, max-age=31536000, immutable`: their
 names change whenever their content does. `index.html` is revalidated on every load,
 because it names the current hashes — caching it would hide a deploy.
