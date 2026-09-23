@@ -9,6 +9,7 @@
 #include "admin.h"
 #include "auth.h"
 #include "chat.h"
+#include "csp.h"
 #include "db.h"
 #include "gc.h"
 #include "shares.h"
@@ -66,6 +67,7 @@ int main(int, char** argv) {
         archive::storage::registerStorageRoutes(db, auth, dataDir);
         archive::registerAdminRoutes(db, auth, dataDir);
         archive::registerChatRoutes(db, auth);
+        archive::registerContentSecurityPolicy();
         archive::scheduleGarbageCollection(db, dataDir);
 
         LOG_INFO << "public base url " << archive::publicBaseUrl();

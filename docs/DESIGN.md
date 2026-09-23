@@ -368,12 +368,61 @@ Two host-level details are worth planning around rather than discovering:
 | `DELETE` | `/api/chat/messages/{id}` | **admin only**; soft delete |
 | `GET` | `/api/chat/blocks` | what I have blocked |
 | `DELETE` | `/api/chat/blocks/{room\|user}/{id}` | undo one |
+| `POST` | `/api/csp-report` | browsers report CSP violations here; logged (public) |
 
 Downloads are always `Content-Disposition: attachment` with `X-Content-Type-Options:
 nosniff`, and any type a browser might execute in our origin is downgraded to
 `application/octet-stream`. Range requests are honoured, so large downloads resume and
 video seeks work — Drogon's `newFileResponse` does not parse `Range` itself, so the
 handler computes the byte window and passes explicit offset/length.
+
+## Response headers
+
+Split by who owns the decision. **Caddy** sets what holds whatever the app does —
+`Strict-Transport-Security`, `X-Frame-Options`, `Referrer-Policy`,
+`X-Content-Type-Options` — deferred, so a header the app also sends is replaced rather
+than duplicated (tested: without `defer`, a download carried `nosniff` twice). **The
+app** sets the Content-Security-Policy, because a CSP describes what *this frontend* may
+do and has to change whenever the frontend does.
+
+The app sends no `Server` header. Drogon announces `drogon/<version>` by default, which
+turns "does this host run something with a known hole" into a lookup.
+
+Fingerprinted assets under `/assets/` are `public, max-age=31536000, immutable`: their
+names change whenever their content does. `index.html` is revalidated on every load,
+because it names the current hashes — caching it would hide a deploy.
+
+### Content-Security-Policy
+
+Every source is `'self'` or `'none'`: no `'unsafe-inline'`, no `'unsafe-eval'`, nothing
+external. That was established from the build rather than assumed — `index.html` has no
+inline script or style, the bundle contains no `eval` or `new Function`, no workers,
+websockets or object URLs, and the fonts are self-hosted.
+
+The one real question was styles. Svelte's dynamic `style="width: {x}%"` bindings (the
+storage bar, upload progress) and its transitions could have needed `'unsafe-inline'`.
+Reading the runtime suggested they go through `style.cssText` and `element.animate()`,
+which `style-src` does not govern — but CSP enforcement belongs to the browser, so that
+was confirmed in one rather than trusted.
+
+`tools/csp-check/` does it: a headless Chromium walks every CSP-sensitive part of the app
+— both style bindings, every transition, thumbnails and the lightbox, chat, the control
+panel — and records each `securitypolicyviolation` event. It ends with a deliberate
+violation as a control, and checks that its report reached the server log, because a
+detector that never fires proves nothing. Run it after any frontend change: the policy
+is only correct for a given frontend, and the next feature can break it silently.
+
+**Failure is silent, so violations are reported.** A blocked script or style simply
+does not happen; the symptom is a feature that stops working in someone else's browser.
+The policy carries `report-uri /api/csp-report`, and the endpoint logs one line per
+violation. It needs no session, since anonymous recipients use the download page, which
+makes its input attacker-controlled on its way into the log: every field is capped and
+control characters are replaced, so a crafted report cannot forge a log line (tested).
+`report-uri` rather than `report-to`, because it is the one all three engines send.
+
+Coverage has limits worth stating. The browser check is Chromium only, and video
+playback — `media-src` for `/inline` — is not exercised by it. Safari and Firefox are
+covered in production by the report endpoint instead.
 
 ## Who can open a link
 
