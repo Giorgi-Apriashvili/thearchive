@@ -9,6 +9,7 @@
 
 #include "db.h"
 #include "httputil.h"
+#include "throttle.h"
 
 namespace archive {
 
@@ -46,14 +47,17 @@ public:
     std::string registerUser(const std::string& inviteCode, const std::string& username,
                              const std::string& password);
 
-    std::string login(const std::string& username, const std::string& password);
+    // `client` is from clientAddress(): it feeds the guessing limit, see throttle.h.
+    std::string login(const std::string& username, const std::string& password,
+                      const std::optional<std::string>& client);
 
     // Verifies `current`, sets `next`, and ends every other session for the account.
     // `keepToken` is the caller's own raw session token, which survives — changing your
     // password should not sign you out of the tab you changed it in. What stops a stolen
-    // session locking the owner out is the current-password check, not the purge.
-    void changePassword(const User& user, const std::string& current,
-                        const std::string& next, const std::string& keepToken);
+    // session locking the owner out is the current-password check, not the purge — and
+    // that check is throttled exactly as login is, since it is the same credential.
+    void changePassword(const User& user, const std::string& current, const std::string& next,
+                        const std::string& keepToken, const std::optional<std::string>& client);
 
     // Renames an account, and carries the rename into the username snapshots that chat
     // keeps (messages.author_name, rooms.creator_name) so the person reads the same way
@@ -80,10 +84,17 @@ public:
 
     bool hasAnyUser() const;
 
+    // Shared by every password check — accounts here, share passwords in shares.cc — so
+    // one client has one guessing budget however it spends it. Mutable because it is
+    // internally synchronised state reached through the const Auth& that the share
+    // handlers hold.
+    PasswordThrottle& throttle() const { return throttle_; }
+
 private:
     std::string startSession(std::int64_t userId);
 
     Database& db_;
+    mutable PasswordThrottle throttle_;
 };
 
 // Resolves the session cookie to a user, or throws HttpError(401).

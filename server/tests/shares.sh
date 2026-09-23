@@ -480,6 +480,60 @@ grep -q 'https://x.test/?FORGED-LOG-LINE' "$WORK/server.log" && ok "the newline 
     || bad "the newline is neutralised in place" "$(grep -i 'x.test' "$WORK/server.log")"
 
 echo
+echo "=== share passwords are limited ==="
+# A share password is checked with no account at all, which makes it the easiest place
+# to guess from. The limiter itself is the one login uses and smoke.sh covers its
+# mechanics; this checks what is particular to shares. No cookie is sent anywhere here —
+# the owner skips the password, which would make every check below meaningless.
+share_from() {  # <client-address> <token> [password]  -> status code
+    if [ $# -ge 3 ]; then
+        curl -s -o /dev/null -w '%{http_code}' -H "X-Forwarded-For: $1" \
+            -H "X-Share-Password: $3" "$BASE/api/shares/$2"
+    else
+        curl -s -o /dev/null -w '%{http_code}' -H "X-Forwarded-For: $1" "$BASE/api/shares/$2"
+    fi
+}
+guarded_share() {  # <password>  -> token of a new public, password-protected share
+    head -c 4096 /dev/urandom > "$WORK/guard.bin"
+    local u; u=$(upload "$WORK/guard.bin")
+    curl -s -b "$JAR" -X POST "$BASE/api/shares" -H 'Content-Type: application/json' \
+        -d "{\"uploads\":[\"$u\"],\"password\":\"$1\",\"public\":true}" | jget token
+}
+TOKG=$(guarded_share letmein-please)
+
+# The download page's first request carries no password: that is how it learns to show
+# the password box. It runs no hash and must never count as a guess.
+for n in $(seq 1 12); do c=$(share_from 203.0.113.50 "$TOKG"); [ "$c" = 401 ] || break; done
+check "twelve password-less first loads are never refused" "$c" "401"
+
+# A viewer with the right password makes a request per thumbnail and file.
+for n in $(seq 1 15); do c=$(share_from 203.0.113.51 "$TOKG" letmein-please); [ "$c" = 200 ] || break; done
+check "fifteen requests with the right password are all served" "$c" "200"
+
+for n in 1 2 3 4 5; do share_from "198.51.100.$((110 + n))" "$TOKG" wrong >/dev/null; done
+check "five wrong passwords, from five addresses, slow the share" \
+    "$(share_from 198.51.100.120 "$TOKG" letmein-please)" "429"
+check "the files are behind the same limit" \
+    "$(curl -s -o /dev/null -w '%{http_code}' -H 'X-Forwarded-For: 198.51.100.121' \
+       -H 'X-Share-Password: letmein-please' "$BASE/d/$TOKG/all.zip")" "429"
+check "and it says when to come back" \
+    "$(curl -s -D - -o /dev/null -H 'X-Forwarded-For: 198.51.100.122' -H 'X-Share-Password: letmein-please' \
+       "$BASE/api/shares/$TOKG" | hdr Retry-After)" "1"
+sleep 1.2
+check "after which the right password works" "$(share_from 198.51.100.123 "$TOKG" letmein-please)" "200"
+
+# One client, one budget: failures at the sign-in form and at share passwords are the
+# same activity, and splitting them would double what a guesser gets.
+TOKB=$(guarded_share budget-share)
+for n in $(seq 1 9); do
+    curl -s -o /dev/null -X POST "$BASE/api/auth/login" -H 'Content-Type: application/json' \
+        -H 'X-Forwarded-For: 203.0.113.60' -d "{\"username\":\"budget$n\",\"password\":\"wrong\"}"
+done
+share_from 203.0.113.60 "$TOKB" wrong >/dev/null
+check "nine failed sign-ins and one wrong share password exhaust one budget" \
+    "$(share_from 203.0.113.60 "$TOKB" budget-share)" "429"
+
+echo
 echo "=== tus termination ==="
 head -c 131072 /dev/urandom > "$WORK/cancel.bin"
 CANCEL=$(sha256sum "$WORK/cancel.bin" | cut -d' ' -f1)
@@ -565,6 +619,9 @@ check "unshared upload survives the sweep" "$(sql "SELECT COUNT(*) FROM uploads 
     || bad "its blob is still on disk" "deleted"
 
 # Backdate everything past expiry and past the grace period, then let the sweep run.
+# Counted beforehand rather than hard-coded, so a new section that creates a share does
+# not break a check about what the sweep keeps.
+SHARES_BEFORE=$(sql 'SELECT COUNT(*) FROM shares;')
 sql "UPDATE shares SET expires_at = strftime('%s','now') - 10;"
 sql "UPDATE uploads SET expires_at = strftime('%s','now') - 10;"
 sql "UPDATE blobs SET created_at = strftime('%s','now') - 100000;"
@@ -574,7 +631,8 @@ check "refcount drained" "$(sql 'SELECT COALESCE(SUM(refcount),0) FROM blobs;')"
 check "expired link 404s" "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/shares/$TOK")" "404"
 check "blob row deleted" "$(sql 'SELECT COUNT(*) FROM blobs;')" "0"
 check "blob file deleted" "$(find "$DATA/blobs" -type f | wc -l)" "0"
-check "share records kept for history" "$(sql 'SELECT COUNT(*) FROM shares;')" "9"
+check "share records kept for history" "$(sql 'SELECT COUNT(*) FROM shares;')" "$SHARES_BEFORE"
+[ "$SHARES_BEFORE" -gt 0 ] && ok "and there were records to keep" || bad "and there were records to keep" "none"
 check "incoming left clean" "$(find "$DATA/incoming" -type f | wc -l)" "0"
 
 echo

@@ -192,9 +192,16 @@ a public IP gets found by scanners and used to serve warez, phishing kits and wo
 Providers' abuse teams are strict, and repeated reports end with the server nullrouted. So:
 
 - Registration is by invite code only; no open signup.
-- Per-user storage quota (default 50 GB) and rate limits.
-- Access logs retained, so an abuse ticket can actually be answered.
+- Password guessing is limited on every check — sign-in, change-password and share
+  passwords — per client and per target. See [Limiting password guessing](#limiting-password-guessing).
 - No directory listing, no enumerable IDs.
+
+Two things this list used to claim, and which are **not** in place: a per-user storage
+quota (`users.quota_bytes` exists, defaulting to 50 GiB, and nothing reads it) and
+retained access logs (Caddy has no `log` directive and the app keeps no access log —
+only failed password checks and admin actions are logged with any context). Both are
+listed under [Deliberately deferred](#deliberately-deferred). If an abuse report arrives
+today, there is little to answer it with.
 
 Sessions are a random 256-bit token in an `HttpOnly; Secure; SameSite=Lax` cookie.
 Passwords are hashed with **Argon2id** (`libargon2`).
@@ -217,8 +224,62 @@ sign you out of the tab you changed it in, and the guard against a stolen sessio
 current-password check rather than the purge. Rotating the surviving token was considered
 and skipped: every other session is already gone, so it is one only this client holds.
 
-The endpoint needs a session, so it adds no anonymous brute-force surface. The absence of
-rate limiting on `/api/auth/login` is unchanged by this and remains open.
+The endpoint needs a session, so it adds no anonymous brute-force surface — and its
+current-password check shares the account's guessing limit with sign-in, so a stolen
+session is not a way to guess the password unthrottled.
+
+### Limiting password guessing
+
+Every password check — sign-in, change-password and share passwords — goes through one
+limiter (`throttle.h`), checked **before** the password is verified. A refused attempt
+therefore costs no Argon2, which matters twice: the hash is deliberately expensive, so
+unbounded attempts would also be a way to burn the server's CPU, and a guesser learns
+nothing even on the attempt where they happen to be right. Only failures count; a viewer
+fetching forty thumbnails with the correct share password is never limited.
+
+Two layers, because they stop different attackers:
+
+| | limit | stops |
+|---|---|---|
+| per client address | 10 failures in 15 minutes, then refused until the oldest ages out | one machine guessing quickly |
+| per target (account or share) | 5 free, then each attempt waits 1s, 2s, 4s … capped at 60s | many machines guessing one password slowly |
+
+The per-target layer **slows rather than locks**. Anyone who knows a username can fail
+against it, and a hard lockout would hand them a way to keep its owner out; a delay
+capped at a minute cannot become that. It still bounds a distributed attack to roughly one
+guess a minute per account — which is what makes the six-character minimum tolerable.
+Names that do not exist are slowed exactly like real ones, or the limiter would reveal
+which usernames are real after five tries.
+
+One client has **one budget** across sign-in and share passwords: they are the same
+activity, and splitting them would double what a guesser gets.
+
+**Where the client address comes from** decides whether any of this works. Behind Caddy
+the TCP peer is Caddy, so the address comes from `X-Forwarded-For` — trusted only when the
+peer is private or loopback, i.e. the proxy — and the rightmost entry is used. Caddy
+discards any `X-Forwarded-For` a client sends and writes its own; that was tested against
+the production image with spoofed headers, not assumed. Trusting the header from anyone
+else would let a client name itself.
+
+The same test showed the other trap: arriving through Docker's port publishing, a client
+can appear as the Docker gateway. A limit on that address would put every visitor in one
+bucket and turn a guessing limit into a lockout of everybody. So **a resolved address that
+is private is not treated as a client at all** — per-address limiting stands aside and
+per-target limiting still applies. Weaker, never a global lockout. Private is written out
+rather than taken from trantor's `isIntranetIp`, which omits IPv6 unique-local
+(`fc00::/7`, the range Docker's IPv6 network on the host uses) and all of `127/8` but one
+address.
+
+IPv6 clients are held to account by `/64`, since a subscriber is routinely handed 2^64
+addresses and a limit on anything narrower limits nothing.
+
+State is in memory: a restart forgets, which is acceptable for limits measured in
+minutes. Both maps are capped at 10,000 entries — expired entries are pruned first, then
+the least recently active — so a flood of new addresses or usernames cannot grow them
+without bound. Keys are truncated, since usernames reach the limiter unvalidated.
+
+Failed checks are logged with the resolved address, or `(no public address)`. That line is
+how to confirm, on a given deployment, whether the app is seeing real client addresses.
 
 ### Renaming an account
 
@@ -369,6 +430,10 @@ Two host-level details are worth planning around rather than discovering:
 | `GET` | `/api/chat/blocks` | what I have blocked |
 | `DELETE` | `/api/chat/blocks/{room\|user}/{id}` | undo one |
 | `POST` | `/api/csp-report` | browsers report CSP violations here; logged (public) |
+
+Every endpoint that checks a password — sign-in, change-password, and any share endpoint
+given `X-Share-Password` or `?p=` — answers `429` with `Retry-After` when the guessing
+limit applies. See [Limiting password guessing](#limiting-password-guessing).
 
 Downloads are always `Content-Disposition: attachment` with `X-Content-Type-Options:
 nosniff`, and any type a browser might execute in our origin is downgraded to
@@ -651,6 +716,12 @@ flight — switching tabs mid-upload would quietly cost someone a 3 GB video.
 ## Deliberately deferred
 
 - **Per-user quota.** `users.quota_bytes` exists and nothing enforces it.
+- **Access logs.** None are kept. Turning on Caddy's `log` directive is one line, but it
+  is a decision rather than a default: it means retaining every visitor's address, and
+  choosing where the file lives, how it rotates and how long it is kept.
+- **A general request-rate limit.** Password checks are limited; nothing else is. The
+  real exposure is bandwidth rather than guessing: anyone holding a public link can
+  download it, or its streamed ZIP, as often as they like.
 - **Chat**: editing messages, attachments, typing indicators, per-room notification
   settings, renaming or deleting a room, and message search. Each is additive; none was
   needed to know whether the core works. Leaving a room is not there either — the only

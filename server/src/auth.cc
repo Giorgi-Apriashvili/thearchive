@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <cctype>
-#include <chrono>
 #include <cstdlib>
 #include <regex>
 
@@ -49,9 +48,11 @@ void validatePassword(const std::string& password) {
     // Length only. Composition rules push people toward predictable substitutions
     // without meaningfully raising the cost of a guess.
     //
-    // Six is short, and it is the login endpoint's rate limiting rather than this
-    // minimum that decides whether that matters. Registration is invite-only, so the
-    // exposed surface is a login form for a handful of known accounts.
+    // Six is short, and what makes it tolerable is the guessing limit on every password
+    // check (throttle.h): past a handful of failures each attempt against an account
+    // waits up to a minute, so an online attack gets roughly one guess a minute however
+    // many machines it uses. Registration is invite-only, so the exposed surface is a
+    // login form for a handful of known accounts.
     if (password.size() < kMinPasswordLength) {
         throw HttpError{400, "password must be at least " +
                                  std::to_string(kMinPasswordLength) + " characters"};
@@ -151,18 +152,28 @@ std::string Auth::bootstrapAdmin(const std::string& rawUsername, const std::stri
     return startSession(db_.lastInsertId());
 }
 
-std::string Auth::login(const std::string& rawUsername, const std::string& password) {
+std::string Auth::login(const std::string& rawUsername, const std::string& password,
+                        const std::optional<std::string>& client) {
     // Lookup must normalise too: an account stored as `giorgi` has to be findable by
     // someone who typed `Giorgi` at the login form.
+    const std::string username = normaliseUsername(rawUsername);
+
+    // Keyed by the name as typed, whether or not the account exists. Throttling only
+    // real accounts would tell a guesser which names are real after five tries — the
+    // same enumeration the decoy hash below exists to prevent.
+    const std::string target = "user:" + username;
+    requireNotThrottled(throttle_, client, target);
+
     auto stmt = db_.prepare(
         "SELECT id, password_hash, disabled_at FROM users WHERE username = ?");
-    stmt.bind(1, normaliseUsername(rawUsername));
+    stmt.bind(1, username);
 
     if (!stmt.step()) {
         // Hash anyway so an unknown username takes the same time as a wrong password.
         // Otherwise the response time enumerates accounts.
         static const std::string decoy = crypto::hashPassword("decoy-password-value");
         (void)crypto::verifyPassword(decoy, password);
+        throttle_.failed(client, target);
         throw HttpError{401, "invalid credentials"};
     }
 
@@ -170,8 +181,11 @@ std::string Auth::login(const std::string& rawUsername, const std::string& passw
     const std::string hash = stmt.columnText(1);
     const bool disabled = !stmt.columnIsNull(2);
     if (!crypto::verifyPassword(hash, password)) {
+        throttle_.failed(client, target);
         throw HttpError{401, "invalid credentials"};
     }
+    // A correct password is not a guess, disabled account or not.
+    throttle_.succeeded(target);
     if (disabled) {
         // Verified first regardless, so a disabled account is not distinguishable from
         // a wrong password by timing or by which error comes back.
@@ -180,8 +194,13 @@ std::string Auth::login(const std::string& rawUsername, const std::string& passw
     return startSession(userId);
 }
 
-void Auth::changePassword(const User& user, const std::string& current,
-                          const std::string& next, const std::string& keepToken) {
+void Auth::changePassword(const User& user, const std::string& current, const std::string& next,
+                          const std::string& keepToken, const std::optional<std::string>& client) {
+    // The same key as login: this checks the same credential, and a stolen session must
+    // not become a way to guess it without the limit that applies at the front door.
+    const std::string target = "user:" + user.username;
+    requireNotThrottled(throttle_, client, target);
+
     auto stmt = db_.prepare("SELECT password_hash FROM users WHERE id = ?");
     stmt.bind(1, user.id);
     if (!stmt.step()) {
@@ -194,8 +213,10 @@ void Auth::changePassword(const User& user, const std::string& current,
     // would otherwise tell someone with a borrowed session what the rules are before
     // they have shown they belong here.
     if (!crypto::verifyPassword(hash, current)) {
+        throttle_.failed(client, target);
         throw HttpError{401, "current password is incorrect"};
     }
+    throttle_.succeeded(target);
     validatePassword(next);
     if (next == current) {
         throw HttpError{400, "the new password must be different from the current one"};
@@ -408,7 +429,8 @@ void registerAuthRoutes(Auth& auth) {
                     throw HttpError{400, "expected a JSON body"};
                 }
                 const auto username = normaliseUsername(requireString(*json, "username"));
-                const auto token = auth.login(username, requireString(*json, "password"));
+                const auto token = auth.login(username, requireString(*json, "password"),
+                                              clientAddress(req));
                 return sessionResponse(token, username);
             }));
         },
@@ -444,7 +466,7 @@ void registerAuthRoutes(Auth& auth) {
                 // down rather than re-read inside Auth.
                 auth.changePassword(user, requireString(json, "current_password"),
                                     requireString(json, "new_password"),
-                                    req->getCookie(kSessionCookie));
+                                    req->getCookie(kSessionCookie), clientAddress(req));
                 LOG_INFO << "user " << user.username << " changed their password";
                 Json::Value body;
                 body["ok"] = true;

@@ -5,6 +5,8 @@
 #include <string>
 #include <string_view>
 
+#include "httputil.h"
+
 namespace archive {
 namespace {
 
@@ -36,10 +38,9 @@ constexpr const char* kPolicy =
     "report-uri /api/csp-report";
 
 // A report arrives from anybody's browser — including anonymous recipients on a
-// download page — so it is attacker-controllable text on its way into the log.
-// Control characters are replaced so a crafted report cannot forge extra log lines,
-// and every field is capped.
-std::string forLog(const Json::Value& value) {
+// download page — so it is attacker-controllable text on its way into the log. Each
+// field is rendered to text and then sanitised by the shared forLog.
+std::string reportField(const Json::Value& value) {
     std::string text;
     if (value.isString()) {
         text = value.asString();
@@ -50,17 +51,7 @@ std::string forLog(const Json::Value& value) {
         compact["indentation"] = "";
         text = Json::writeString(compact, value);
     }
-    constexpr std::size_t kMaxField = 200;
-    if (text.size() > kMaxField) {
-        text.resize(kMaxField);
-        text += "...";
-    }
-    for (char& c : text) {
-        if (static_cast<unsigned char>(c) < 0x20 || c == 0x7f) {
-            c = '?';
-        }
-    }
-    return text;
+    return forLog(std::move(text));
 }
 
 }  // namespace
@@ -110,12 +101,12 @@ void registerContentSecurityPolicy() {
             const Json::Value& directive = report.isMember("effective-directive")
                                                ? report["effective-directive"]
                                                : report["violated-directive"];
-            LOG_WARN << "csp violation: " << forLog(directive) << " blocked "
-                     << forLog(report["blocked-uri"]) << " on "
-                     << forLog(report["document-uri"]) << " at "
-                     << forLog(report["source-file"]) << ":"
-                     << forLog(report["line-number"]) << " sample=\""
-                     << forLog(report["script-sample"]) << "\"";
+            LOG_WARN << "csp violation: " << reportField(directive) << " blocked "
+                     << reportField(report["blocked-uri"]) << " on "
+                     << reportField(report["document-uri"]) << " at "
+                     << reportField(report["source-file"]) << ":"
+                     << reportField(report["line-number"]) << " sample=\""
+                     << reportField(report["script-sample"]) << "\"";
             done(drogon::k204NoContent);
         },
         {drogon::Post});
