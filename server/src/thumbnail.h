@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <string>
+#include <string_view>
 
 namespace archive::thumbnail {
 
@@ -33,5 +34,16 @@ std::filesystem::path path(const std::filesystem::path& dataDir, const std::stri
 
 // Removes both sizes and prunes the fan-out directories once empty.
 void remove(const std::filesystem::path& dataDir, const std::string& hash);
+
+// Side of a profile picture. Shown at 24-96 CSS pixels; 256 stays sharp on a 2x screen.
+inline constexpr int kAvatar = 256;
+
+// Renders a profile picture from an uploaded image: rotated upright, cropped square from
+// the centre, scaled to kAvatar and saved as WebP with *all* metadata stripped — a phone
+// photo's EXIF carries the GPS position it was taken at, and a picture is shown to every
+// member. The upload itself is never stored. Returns false for anything that will not
+// decode, and for images whose declared dimensions are absurd: the header is read before
+// any pixels, so a small file claiming to be enormous is refused rather than decoded.
+bool renderAvatar(std::string_view image, const std::filesystem::path& target);
 
 }  // namespace archive::thumbnail

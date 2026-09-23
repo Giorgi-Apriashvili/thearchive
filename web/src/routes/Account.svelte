@@ -1,8 +1,90 @@
 <script lang="ts">
-  import { api, ApiError, type Me } from '../lib/api'
+  import { untrack } from 'svelte'
+  import { api, ApiError, type Me, type Profile } from '../lib/api'
   import { link } from '../lib/router.svelte'
+  import Avatar from '../lib/Avatar.svelte'
 
-  let { me }: { me: Me } = $props()
+  let { me, onChanged }: { me: Me; onChanged: () => void } = $props()
+
+  // ---- profile ---------------------------------------------------------------------
+  // Mirrors the server's limits so the counters are honest. Characters, not bytes, as
+  // the server counts them: [...text] splits by code point, which .length does not.
+  const MAX_NAME = 40
+  const MAX_BIO = 500
+  const MAX_PICTURE_BYTES = 10 * 1024 * 1024
+  const chars = (text: string) => [...text.trim()].length
+
+  let displayName = $state('')
+  let bio = $state('')
+  let profileBusy = $state(false)
+  let profileError = $state('')
+  let profileSaved = $state(false)
+  let pictureBusy = $state(false)
+  let pictureError = $state('')
+
+  // Read through the same endpoint other members use, so what is edited here is exactly
+  // what they see. Once, on arrival: `me` is refreshed after every save and every new
+  // picture, and reloading then would wipe whatever is half-typed in the other field.
+  api
+    .get<Profile>(`/api/users/${encodeURIComponent(untrack(() => me.username))}`)
+    .then((profile) => {
+      displayName = profile.display_name ?? ''
+      bio = profile.bio ?? ''
+    })
+    .catch(() => (profileError = 'your profile could not be loaded'))
+
+  async function saveProfile(event: SubmitEvent) {
+    event.preventDefault()
+    profileError = ''
+    profileSaved = false
+    profileBusy = true
+    try {
+      await api.patch('/api/me/profile', { display_name: displayName, bio })
+      profileSaved = true
+      onChanged()
+    } catch (e) {
+      profileError = e instanceof ApiError ? e.message : 'could not save your profile'
+    } finally {
+      profileBusy = false
+    }
+  }
+
+  async function choosePicture(event: Event) {
+    const input = event.currentTarget as HTMLInputElement
+    const file = input.files?.[0]
+    input.value = ''
+    if (!file) return
+    pictureError = ''
+    // Checked here only to save uploading 40 MB to be told no; the server decides.
+    if (file.size > MAX_PICTURE_BYTES) {
+      pictureError = 'a picture is at most 10 MB'
+      return
+    }
+    pictureBusy = true
+    try {
+      await api.put('/api/me/avatar', file)
+      onChanged()
+    } catch (e) {
+      pictureError = e instanceof ApiError ? e.message : 'could not use that picture'
+    } finally {
+      pictureBusy = false
+    }
+  }
+
+  async function removePicture() {
+    pictureError = ''
+    pictureBusy = true
+    try {
+      await api.del('/api/me/avatar')
+      onChanged()
+    } catch (e) {
+      pictureError = e instanceof ApiError ? e.message : 'could not remove your picture'
+    } finally {
+      pictureBusy = false
+    }
+  }
+
+  // ---- password ----------------------------------------------------------------------
 
   const MIN_LENGTH = 6
 
@@ -54,6 +136,83 @@
   </p>
 
   <section class="mt-6 rounded-xl border border-ink-800 p-4">
+    <div class="flex items-baseline justify-between gap-3">
+      <h2 class="text-sm font-medium text-ink-300">Profile</h2>
+      <a
+        href="/u/{encodeURIComponent(me.username)}"
+        onclick={(e) => link(e, `/u/${encodeURIComponent(me.username)}`)}
+        class="text-xs text-ink-500 hover:text-ink-300"
+      >View your profile</a>
+    </div>
+    <p class="mt-1 text-xs text-ink-500">
+      Seen by every member here, never by someone who only has a link. Your @username is
+      always shown beside your display name, so nobody can pass as you by choosing yours.
+    </p>
+
+    <div class="mt-4 flex items-center gap-4">
+      <Avatar src={me.avatar} name={me.username} size="md" />
+      <div class="flex flex-wrap items-center gap-3 text-xs">
+        <label
+          class="cursor-pointer rounded-lg border border-ink-700 px-3 py-1.5 text-ink-300 transition hover:border-ink-500 {pictureBusy
+            ? 'pointer-events-none opacity-40'
+            : ''}"
+        >
+          {pictureBusy ? 'Working…' : me.avatar ? 'Change picture' : 'Add a picture'}
+          <input type="file" accept="image/*" class="hidden" onchange={choosePicture} />
+        </label>
+        {#if me.avatar}
+          <button disabled={pictureBusy} onclick={removePicture} class="text-ink-500 hover:text-red-400 disabled:opacity-40">
+            Remove
+          </button>
+        {/if}
+      </div>
+    </div>
+    <p class="mt-2 text-xs text-ink-500">
+      Cropped square from the centre. Only a small copy is kept, and everything else in the
+      file — including where a photo was taken — is thrown away.
+    </p>
+    {#if pictureError}
+      <p class="mt-2 rounded-lg bg-red-950/60 px-3 py-2 text-sm text-red-300">{pictureError}</p>
+    {/if}
+
+    <form onsubmit={saveProfile} class="mt-5 space-y-3">
+      <label class="block">
+        <span class="flex justify-between text-xs text-ink-500">
+          <span>Display name</span>
+          <span class="tnum {chars(displayName) > MAX_NAME ? 'text-red-400' : ''}">{chars(displayName)}/{MAX_NAME}</span>
+        </span>
+        <input
+          bind:value={displayName}
+          placeholder={me.username}
+          class="mt-1 w-full rounded-lg border border-ink-700 bg-ink-900 px-3 py-2 text-sm outline-none focus:border-accent"
+        />
+      </label>
+      <label class="block">
+        <span class="flex justify-between text-xs text-ink-500">
+          <span>About you</span>
+          <span class="tnum {chars(bio) > MAX_BIO ? 'text-red-400' : ''}">{chars(bio)}/{MAX_BIO}</span>
+        </span>
+        <textarea
+          bind:value={bio}
+          rows="4"
+          class="mt-1 w-full resize-y rounded-lg border border-ink-700 bg-ink-900 px-3 py-2 text-sm outline-none focus:border-accent"
+        ></textarea>
+      </label>
+
+      {#if profileError}
+        <p class="rounded-lg bg-red-950/60 px-3 py-2 text-sm text-red-300">{profileError}</p>
+      {/if}
+      {#if profileSaved}
+        <p class="text-xs text-ink-500">Saved.</p>
+      {/if}
+      <button
+        disabled={profileBusy || chars(displayName) > MAX_NAME || chars(bio) > MAX_BIO}
+        class="rounded-lg bg-accent px-3 py-2 text-sm font-medium text-ink-950 transition hover:bg-accent-dim disabled:opacity-40"
+      >{profileBusy ? 'Saving…' : 'Save profile'}</button>
+    </form>
+  </section>
+
+  <section class="mt-4 rounded-xl border border-ink-800 p-4">
     <h2 class="text-sm font-medium text-ink-300">Change your password</h2>
     <p class="mt-1 text-xs text-ink-500">
       You will stay signed in here. Everywhere else you are signed in will be signed out —

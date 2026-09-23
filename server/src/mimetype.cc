@@ -51,7 +51,10 @@ std::string sniff(const std::filesystem::path& file) {
         got = std::fread(head.data(), 1, head.size(), fp);
         std::fclose(fp);
     }
-    const std::string_view data{head.data(), got};
+    return sniffBytes(std::string_view{head.data(), got});
+}
+
+std::string sniffBytes(std::string_view data) {
     if (data.empty()) {
         return "application/octet-stream";
     }

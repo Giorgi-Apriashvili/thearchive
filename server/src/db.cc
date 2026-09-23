@@ -281,7 +281,20 @@ DELETE FROM message_mentions
  WHERE message_id IN (SELECT id FROM messages WHERE deleted_at IS NOT NULL);
 )SQL";
 
-constexpr std::array<Migration, 12> kMigrations{{
+// Profiles. All three are optional and edited by the member themselves.
+//
+// `avatar` holds a random version token for the current picture, not the picture: the
+// image is a file under avatars/, named <user id>-<token>.webp. A new picture gets a new
+// token, so its URL changes and every copy of it can be cached for good; the old file is
+// deleted, and the sweep removes any file no user currently points at. Being a file, a
+// picture is not in the database backups — which are the database only.
+constexpr const char* kSchemaV13 = R"SQL(
+ALTER TABLE users ADD COLUMN display_name TEXT;
+ALTER TABLE users ADD COLUMN bio TEXT;
+ALTER TABLE users ADD COLUMN avatar TEXT;
+)SQL";
+
+constexpr std::array<Migration, 13> kMigrations{{
     {1, kSchemaV1},
     {2, kSchemaV2},
     {3, kSchemaV3},
@@ -294,6 +307,7 @@ constexpr std::array<Migration, 12> kMigrations{{
     {10, kSchemaV10},
     {11, kSchemaV11},
     {12, kSchemaV12},
+    {13, kSchemaV13},
 }};
 
 }  // namespace

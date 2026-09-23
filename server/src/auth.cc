@@ -301,14 +301,16 @@ std::optional<User> Auth::userForSession(const std::string& token) const {
         return std::nullopt;
     }
     auto stmt = db_.prepare(
-        "SELECT u.id, u.username, u.role FROM sessions s "
+        "SELECT u.id, u.username, u.role, COALESCE(u.display_name, ''), "
+        "       COALESCE(u.avatar, '') FROM sessions s "
         "JOIN users u ON u.id = s.user_id "
         "WHERE s.token = ? AND s.expires_at > ? AND u.disabled_at IS NULL");
     stmt.bind(1, crypto::sha256Hex(token)).bind(2, nowSeconds());
     if (!stmt.step()) {
         return std::nullopt;
     }
-    return User{stmt.columnInt(0), stmt.columnText(1), stmt.columnText(2)};
+    return User{stmt.columnInt(0), stmt.columnText(1), stmt.columnText(2), stmt.columnText(3),
+                stmt.columnText(4)};
 }
 
 void Auth::logout(const std::string& token) {
@@ -483,6 +485,13 @@ void registerAuthRoutes(Auth& auth) {
                 Json::Value body;
                 body["username"] = user.username;
                 body["role"] = user.role;
+                // Present only when set, like every optional profile field in the API.
+                if (!user.displayName.empty()) {
+                    body["display_name"] = user.displayName;
+                }
+                if (!user.avatar.empty()) {
+                    body["avatar"] = avatarUrl(user.id, user.avatar);
+                }
                 return drogon::HttpResponse::newHttpJsonResponse(body);
             }));
         },

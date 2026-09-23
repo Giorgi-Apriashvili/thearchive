@@ -30,9 +30,23 @@ struct User {
     // grants nothing beyond `user` — so the tier can be assigned before anyone decides
     // what it should mean.
     std::string role = "user";
+    // Profile fields, empty when unset. The display name is cosmetic and chosen by the
+    // member, so it never replaces the username where something is being attributed:
+    // anyone could call themselves anything, and the username is what is unique.
+    std::string displayName;
+    std::string avatar;  // version token of the current picture; see avatarUrl()
 
     bool isAdmin() const { return role == "admin"; }
 };
+
+// Where a member's picture is served: "/api/avatars/{id}/{version}", or empty when they
+// have none. Built only by the server, so clients treat it as an opaque URL, and the
+// version in it changes with the picture, so a URL is valid for exactly one image.
+inline std::string avatarUrl(std::int64_t userId, const std::string& version) {
+    return version.empty()
+               ? std::string{}
+               : "/api/avatars/" + std::to_string(userId) + "/" + version;
+}
 
 // The roles that may be assigned.
 bool isValidRole(const std::string& role);

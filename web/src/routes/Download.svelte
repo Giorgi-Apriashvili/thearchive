@@ -3,6 +3,7 @@
   import { bytes, shortDate, until } from '../lib/format'
   import Lightbox from '../lib/Lightbox.svelte'
   import { link } from '../lib/router.svelte'
+  import MemberName from '../lib/MemberName.svelte'
 
   let { token }: { token: string } = $props()
 
@@ -170,7 +171,7 @@
             <p class="truncate text-sm">{file.filename}</p>
             <p class="tnum mt-0.5 text-xs text-ink-500">
               {bytes(file.size)}
-              {#if file.uploaded_by}· from {file.uploaded_by}{/if}
+              {#if file.uploaded_by}· from <MemberName username={file.uploaded_by} linked={share?.viewer_is_member ?? false} />{/if}
               {#if file.client_mtime}· {shortDate(file.client_mtime)}{/if}
             </p>
           </div>

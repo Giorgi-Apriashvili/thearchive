@@ -3,6 +3,8 @@
   import { chat } from '../lib/chat.svelte'
   import { link, router } from '../lib/router.svelte'
   import Confirm from '../lib/Confirm.svelte'
+  import Avatar from '../lib/Avatar.svelte'
+  import MemberName from '../lib/MemberName.svelte'
   import Uploads from './Uploads.svelte'
   import Chat from './chat/Chat.svelte'
 
@@ -42,7 +44,11 @@
           Weekend<em>Archive</em>
         </a>
       </h1>
-      <p class="mt-1 text-sm text-ink-500">Signed in as {me.username}</p>
+      <p class="mt-1 flex items-center gap-2 text-sm text-ink-500">
+        Signed in as
+        <Avatar src={me.avatar} name={me.username} size="xs" />
+        <MemberName username={me.username} displayName={me.display_name} role={me.role} />
+      </p>
     </div>
     <div class="flex items-center gap-4 text-xs">
       <!-- Minting is admin-only server-side; showing the button to everyone would just

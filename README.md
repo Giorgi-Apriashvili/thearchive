@@ -93,6 +93,7 @@ Each drives a real server over HTTP; none needs a fixture or a mock.
 ./server/tests/smoke.sh    # auth + tus, incl. an interrupted and resumed upload
 ./server/tests/shares.sh   # shares, downloads, ranges, expiry sweep
 ./server/tests/chat.sh     # rooms, invitations, blocks, admin removal
+./server/tests/profiles.sh # profiles, pictures and what a picture keeps of its original
 ```
 
 After any **frontend** change, also run the browser check before deploying:

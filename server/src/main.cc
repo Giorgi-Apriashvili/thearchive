@@ -13,6 +13,7 @@
 #include "db.h"
 #include "gc.h"
 #include "privacy.h"
+#include "profiles.h"
 #include "shares.h"
 #include "storage.h"
 #include "thumbnail.h"
@@ -70,6 +71,7 @@ int main(int, char** argv) {
         archive::registerChatRoutes(db, auth);
         archive::registerContentSecurityPolicy();
         archive::registerPrivacyRoutes();
+        archive::registerProfileRoutes(db, auth, dataDir);
         archive::scheduleGarbageCollection(db, dataDir);
 
         LOG_INFO << "public base url " << archive::publicBaseUrl();

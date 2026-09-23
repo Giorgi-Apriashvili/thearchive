@@ -85,6 +85,12 @@
             joined; and who invited you.
           </li>
           <li>
+            <strong>Your profile</strong>, if you fill it in: a display name, a few lines about
+            yourself, and a picture. Only a small square copy of the picture is kept — the file
+            you uploaded is discarded, and with it everything inside it, such as where a photo
+            was taken.
+          </li>
+          <li>
             <strong>Signing in:</strong> one cookie, holding a random session identifier. It is
             needed for the site to work, so there is no cookie banner, and it is the only cookie
             the site sets. A session lasts {days(r.session_days)} or until you sign out.
@@ -128,6 +134,13 @@
             link like the files themselves.
           </li>
           <li>
+            <strong>Profiles</strong> — your display name, about text, picture, when you joined
+            and who invited you — are visible to every signed-in member, never to someone who
+            only has a link. A profile lists the chat rooms its viewer shares with you, not all
+            of yours. Your username is always shown beside your display name, so nobody can pass
+            as you by choosing the same one.
+          </li>
+          <li>
             <strong>Chat:</strong> every member can see the names of all rooms; what is said in a
             room only its members can see.
           </li>
@@ -166,12 +179,18 @@
             marker saying who removed it, and its text is erased.
           </li>
           <li>
+            <strong>Your profile</strong> stays until you change it or your account is deleted.
+            A picture you replace or remove is deleted at once; a deleted account's picture goes
+            at the next cleanup, normally within {minutes(r.sweep_minutes)}.
+          </li>
+          <li>
             <strong>Your account</strong> lasts until an administrator deletes it; there is no way
             to delete your own. Deleting an account removes it, its sessions and its links, whose
             files are then deleted as above. Its chat messages remain, as above.
           </li>
           <li>
-            <strong>Backups</strong> of the database — accounts, links and chat, not the files —
+            <strong>Backups</strong> of the database — accounts and profiles, links and chat, but
+            not the files or pictures —
             are made every day and before every update, and each is deleted after
             {days(r.backup_days)}. So something deleted from the site can survive in a backup for
             up to {days(r.backup_days)}.

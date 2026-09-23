@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "httputil.h"
+#include "profiles.h"
 #include "storage.h"
 #include "thumbnail.h"
 
@@ -233,6 +234,7 @@ GcStats runGarbageCollection(Database& db, const fs::path& dataDir) {
     stats.strayFilesRemoved = removeStrayIncoming(db, dataDir, now);
     stats.sessionsPurged = purgeExpiredSessions(db, now);
     stats.thumbnailsRendered = renderMissingThumbnails(db, dataDir);
+    stats.avatarsRemoved = removeStaleAvatars(db, dataDir);
     return stats;
 }
 
@@ -256,7 +258,8 @@ void scheduleGarbageCollection(Database& db, const fs::path& dataDir) {
                              << stats.bytesReclaimed << " bytes), "
                              << stats.strayFilesRemoved << " stray file(s), "
                              << stats.sessionsPurged << " session(s) purged, "
-                             << stats.thumbnailsRendered << " thumbnail(s) rendered";
+                             << stats.thumbnailsRendered << " thumbnail(s) rendered, "
+                             << stats.avatarsRemoved << " stale picture(s) removed";
                 }
             } catch (const std::exception& e) {
                 // A failed sweep must not take the server down; the next one retries.

@@ -63,6 +63,7 @@ client sends the whole file in one `PATCH`, which fails on the first large video
 ├── incoming/                  in-progress uploads, named by upload id
 ├── blobs/ab/cd/<sha256>       completed, content-addressed
 ├── thumbs/ab/cd/<sha256>-{sm,lg}.webp   previews, same fan-out as blobs
+├── avatars/<user id>-<version>.webp      profile pictures, 256px
 └── db/archive.db              SQLite (WAL mode)
 ```
 
@@ -78,7 +79,8 @@ refcount in the DB tracks how many live shares point at each blob.
 
 ```sql
 users(id, username, password_hash, created_at, quota_bytes,
-      role, disabled_at)                                   -- user | privileged | admin
+      role, disabled_at,                                   -- user | privileged | admin
+      display_name, bio, avatar)                           -- avatar: picture version
 invites(code, created_by, used_by, created_at, expires_at)
 sessions(token, user_id, created_at, expires_at)          -- token stored hashed
 
@@ -444,6 +446,10 @@ Two host-level details are worth planning around rather than discovering:
 | `GET` | `/api/chat/blocks` | what I have blocked |
 | `DELETE` | `/api/chat/blocks/{room\|user}/{id}` | undo one |
 | `POST` | `/api/csp-report` | browsers report CSP violations here; logged (public) |
+| `GET` | `/api/users/{username}` | a member's profile — members only |
+| `PATCH` | `/api/me/profile` | `{display_name?, bio?}` — only the fields present change |
+| `PUT`/`DELETE` | `/api/me/avatar` | raw image body; rendered to a 256px WebP |
+| `GET` | `/api/avatars/{id}/{version}` | the picture — members only, cached for good |
 
 Every endpoint that checks a password — sign-in, change-password, and any share endpoint
 given `X-Share-Password` or `?p=` — answers `429` with `Retry-After` when the guessing
@@ -743,6 +749,46 @@ The uploads pane stays mounted and is merely hidden when the chat tab is showing
 Unmounting it would discard the queue, the progress and the upload ids of anything in
 flight — switching tabs mid-upload would quietly cost someone a 3 GB video.
 
+## Profiles
+
+Each member has a page at `/u/{username}` with a display name, a short bio and a picture
+they set themselves on the account page, beside what the site already knows: when they
+joined, who invited them, and their role (as colour, as everywhere else). **Members only**,
+through the API as well as the page — someone holding just a link sees none of it, and a
+name on a download page stays plain text for them rather than linking to a sign-in form.
+
+**A display name never stands in for the username.** Anyone can call themselves anything,
+so a message "from Giorgi" would mean nothing; the unique `@username` is always shown
+beside it. That rule lives in one component, `MemberName.svelte`, so it cannot be forgotten
+at a single call site, and the API keeps `author` as the username with the display name
+beside it. Unicode direction overrides and isolates are refused in names and bios, since
+they would let a name visually reorder the `@username` next to it; names are also wrapped
+in `<bdi>`, which covers text simply written in a right-to-left script. Length limits count
+characters, not bytes, so a name in Georgian gets the same room as one in English.
+
+**A profile lists the rooms you share, not all of theirs.** Room names are visible to every
+member, but who is in a room is visible only to that room's members, and listing a
+person's rooms on their profile would hand that to anyone who opened it.
+
+**Pictures** are rendered by libvips from the upload — rotated upright, cropped square from
+the centre, scaled to 256px — and saved as WebP with *all* metadata stripped. The upload
+itself is never kept. That matters because a phone photo's EXIF carries where it was taken,
+and a picture is shown to every member; the suite embeds a marker string in an image's
+EXIF and asserts it is absent from what is served, which was first shown to fail without
+stripping. Only formats on the preview allowlist are accepted, decided from the bytes
+rather than the declared type, so libvips is never handed an SVG. The header is read before
+any pixel is decoded and anything past 50 megapixels refused — tested with a *valid* 7,100
+x 7,100 image in a 6 KB file, which decodes perfectly well if nothing stops it; a test that
+only offered a broken file would pass with the check removed.
+
+Each picture has a random version in `users.avatar` and lives at
+`avatars/<id>-<version>.webp`, so its URL changes whenever it does: served
+`private, max-age=31536000, immutable`, and a replaced picture's old URL stops working at
+once. The sweep deletes any file no member points at — a deleted account's, or one a failed
+delete left behind — but not one younger than ten minutes, so it can never catch a picture
+between its file being written and the database pointing at it. Pictures are files, so
+they are not in the database backups.
+
 ## Privacy
 
 The notice lives at `/privacy`. It is linked from the sign-in page, the download page and
@@ -784,6 +830,10 @@ the part to have someone qualified read.
 ## Deliberately deferred
 
 - **Per-user quota.** `users.quota_bytes` exists and nothing enforces it.
+- **A Georgian typeface.** Inter, the bundled font, covers Latin, Cyrillic and Greek but
+  not Georgian, so Georgian text falls back to each device's own Georgian font. It renders,
+  in a second face. Bundling Noto Sans Georgian through `@fontsource` with a
+  `unicode-range` would match it and only load when Georgian appears.
 - **Access logs.** None are kept. Turning on Caddy's `log` directive is one line, but it
   is a decision rather than a default: it means retaining every visitor's address, and
   choosing where the file lives, how it rotates and how long it is kept.

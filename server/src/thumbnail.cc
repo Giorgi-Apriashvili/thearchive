@@ -101,4 +101,45 @@ void remove(const fs::path& dataDir, const std::string& hash) {
     fs::remove(large.parent_path().parent_path(), ec);
 }
 
+bool renderAvatar(std::string_view image, const fs::path& target) {
+    // libvips takes a non-const pointer for buffers it only ever reads.
+    void* data = const_cast<char*>(image.data());
+
+    // Header first. Opening from a buffer reads only the header, so this costs nothing
+    // for a real photo and stops a tiny file that declares 100,000 x 100,000 pixels
+    // before any of them are decoded. 50 MP is well past any phone camera.
+    {
+        VipsImage* header = vips_image_new_from_buffer(data, image.size(), "", nullptr);
+        if (header == nullptr) {
+            vips_error_clear();
+            return false;
+        }
+        const double pixels = static_cast<double>(vips_image_get_width(header)) *
+                              static_cast<double>(vips_image_get_height(header));
+        g_object_unref(header);
+        if (pixels > 50e6) {
+            return false;
+        }
+    }
+
+    VipsImage* square = nullptr;
+    // Cropped from the centre rather than libvips' "attention" heuristic: the result is
+    // then what a person expects from a square crop, not a guess at what mattered.
+    if (vips_thumbnail_buffer(data, image.size(), &square, kAvatar, "height", kAvatar, "crop",
+                              VIPS_INTERESTING_CENTRE, "auto_rotate", TRUE, nullptr) != 0) {
+        vips_error_clear();
+        return false;
+    }
+    const int rc = vips_image_write_to_file(square, target.c_str(), "Q", 85, "strip", TRUE,
+                                            nullptr);
+    g_object_unref(square);
+    if (rc != 0) {
+        vips_error_clear();
+        std::error_code ec;
+        fs::remove(target, ec);  // never leave a half-written picture behind
+        return false;
+    }
+    return true;
+}
+
 }  // namespace archive::thumbnail
