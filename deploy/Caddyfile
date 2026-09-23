@@ -5,10 +5,33 @@
 	@compressible not path /d/*
 	encode @compressible zstd gzip
 
+	# Deferred, so these are applied as the response is written and replace whatever the
+	# app sent rather than being added alongside it. The download handler already sets
+	# X-Content-Type-Options itself; without `defer` those responses would carry it twice.
+	#
+	# nosniff matters most on /d/, where user uploads are served, and the app covers
+	# that on its own. Setting it here too makes it uniform instead of depending on
+	# which handler happened to answer.
 	header {
+		defer
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
 		X-Frame-Options "DENY"
 		Referrer-Policy "no-referrer"
+	}
+
+	# Vite fingerprints everything under /assets/: the filename changes whenever the
+	# content does, so a year is safe and `immutable` stops browsers revalidating on
+	# reload. The app sends `Expires: 1970` on static files, which is dropped rather than
+	# left contradicting the Cache-Control.
+	#
+	# index.html is deliberately not covered. It is what names the current hashes, so it
+	# has to be revalidated on every load or a deploy would go unnoticed.
+	@assets path /assets/*
+	header @assets {
+		defer
+		Cache-Control "public, max-age=31536000, immutable"
+		-Expires
 	}
 
 	reverse_proxy app:8080 {
