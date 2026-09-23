@@ -215,13 +215,14 @@ export interface ShareCard {
 }
 
 /** A link a member sent you. */
+/** One send: the links someone sent you together, with their note once. */
 export interface InboxItem {
-  id: number
+  id: string
   sent_at: number
   seen: boolean
   note?: string
   sender: { username: string; role: string; display_name?: string; avatar?: string }
-  card: ShareCard
+  cards: ShareCard[]
 }
 
 export interface ChatBlocks {

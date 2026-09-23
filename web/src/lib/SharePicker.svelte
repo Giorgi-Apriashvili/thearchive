@@ -155,7 +155,7 @@
 
     <div class="mt-4 flex items-center justify-between gap-3">
       <span class="text-xs text-ink-500">
-        {#if multiple && chosen.length}{chosen.length} chosen{#if chosen.length === MAX} (the most a message carries){/if}{/if}
+        {#if multiple && chosen.length}{chosen.length} chosen{#if chosen.length === MAX} (the most at once){/if}{/if}
       </span>
       <div class="flex gap-2">
         <button onclick={onCancel} class="rounded-lg border border-ink-700 px-3 py-1.5 text-xs text-ink-300 hover:border-ink-500">

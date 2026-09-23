@@ -12,13 +12,13 @@ PORT=$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print
 BASE=http://127.0.0.1:$PORT
 DATA=$(mktemp -d)
 WORK=$(mktemp -d)
-ALICE=$(mktemp); BOB=$(mktemp); CAROL=$(mktemp)
+ALICE=$(mktemp); BOB=$(mktemp); CAROL=$(mktemp); DAVE=$(mktemp)
 DB="$DATA/db/archive.db"
 PASS=0; FAIL=0
 
 cleanup() {
     kill "${PID:-}" 2>/dev/null; wait "${PID:-}" 2>/dev/null
-    rm -rf "$DATA" "$WORK" "$ALICE" "$BOB" "$CAROL"
+    rm -rf "$DATA" "$WORK" "$ALICE" "$BOB" "$CAROL" "$DAVE"
 }
 trap cleanup EXIT
 
@@ -67,6 +67,7 @@ DOOMED=$(make_share "$ALICE" "$WORK/notes.bin" ',"title":"To be revoked"')
 AGEING=$(make_share "$ALICE" "$WORK/notes.bin" ',"title":"To expire"')
 ONCE=$(make_share "$ALICE" "$WORK/notes.bin" ',"title":"One download","max_downloads":1,"public":true')
 BOBS=$(make_share "$BOB" "$WORK/notes.bin" ',"title":"Bob owns this"')
+PACKING=$(make_share "$ALICE" "$WORK/notes.bin" ',"title":"Packing list"')
 CAROLS=$(make_share "$CAROL" "$WORK/notes.bin" ',"title":"Carol was here"')
 
 ROOM=$(post "$ALICE" /api/chat/rooms '{"name":"Trip"}' | py "import sys,json;print(json.load(sys.stdin)['id'])")
@@ -152,7 +153,7 @@ check "alice sends bob her photos" "$(send "$ALICE" "$PHOTOS" '{"username":"Bob"
 check "bob has one unread" "$(unread "$BOB")" "1"
 check "it is in his inbox" "$(inbox "$BOB" 'len(items)')" "1"
 check "from alice, with her note" "$(inbox "$BOB" "items[0]['sender']['username'], items[0]['note']")" "alice the good ones are at the end"
-check "as a working card" "$(inbox "$BOB" "items[0]['card']['state'], items[0]['card']['token']")" "live $PHOTOS"
+check "as a working card" "$(inbox "$BOB" "items[0]['cards'][0]['state'], items[0]['cards'][0]['token']")" "live $PHOTOS"
 check "alice's own inbox is empty" "$(inbox "$ALICE" 'len(items)')" "0"
 
 check "marking seen" "$(post_code "$BOB" /api/inbox/seen '{}')" "200"
@@ -171,7 +172,7 @@ check "and no text-direction tricks" "$(send "$ALICE" "$PHOTOS" '{"username":"bo
 
 # The link keeps its own rules: sending grants nothing.
 send "$ALICE" "$LOCKED" '{"username":"bob"}' >/dev/null
-check "a password-protected link arrives" "$(inbox "$BOB" "[i['card']['password_protected'] for i in items].count(True)")" "1"
+check "a password-protected link arrives" "$(inbox "$BOB" "[c['password_protected'] for i in items for c in i['cards']].count(True)")" "1"
 check "and still asks bob for its password" "$(code -b "$BOB" "$BASE/api/shares/$LOCKED")" "401"
 check "which, given, opens it" "$(code -b "$BOB" -H 'X-Share-Password: hunter22' "$BASE/api/shares/$LOCKED")" "200"
 
@@ -180,7 +181,41 @@ echo "=== the inbox is its owner's ==="
 ITEM=$(inbox "$BOB" "items[0]['id']")
 check "someone else cannot dismiss your item" "$(code -b "$ALICE" -X DELETE "$BASE/api/inbox/items/$ITEM")" "404"
 check "you can" "$(code -b "$BOB" -X DELETE "$BASE/api/inbox/items/$ITEM")" "200"
-check "and it is gone" "$(inbox "$BOB" "$ITEM in [i['id'] for i in items]")" "False"
+check "and it is gone" "$(inbox "$BOB" "'$ITEM' in [i['id'] for i in items]")" "False"
+
+echo
+echo "=== several links at once ==="
+join "$DAVE" dave
+many() { post_code "$1" "/api/users/$2/links" "$3"; }
+titles() { inbox "$1" "';'.join(','.join(c['title'] for c in i['cards']) for i in items)"; }
+
+check "needs a session" "$(code -X POST "$BASE/api/users/dave/links" -H 'Content-Type: application/json' -d "{\"links\":[\"$PHOTOS\"]}")" "401"
+check "needs at least one link" "$(many "$ALICE" dave '{"links":[]}')" "400"
+check "as a list" "$(many "$ALICE" dave "{\"links\":\"$PHOTOS\"}")" "400"
+check "of at most ten" "$(many "$ALICE" dave "{\"links\":$ELEVEN}")" "400"
+# All or nothing: one stale link refuses the send, rather than delivering the rest.
+check "one link that stopped working refuses the whole send" "$(many "$ALICE" dave "{\"links\":[\"$PHOTOS\",\"$AGEING\"]}")" "409"
+check "and delivers none of it" "$(inbox "$DAVE" 'len(items)')" "0"
+check "as does one that is not yours" "$(many "$ALICE" dave "{\"links\":[\"$PHOTOS\",\"$BOBS\"]}"),$(inbox "$DAVE" 'len(items)')" "404,0"
+
+check "alice sends dave three, one of them twice" \
+    "$(many "$ALICE" Dave "{\"links\":[\"$PACKING\",\"$PHOTOS\",\"$PACKING\"],\"note\":\"for saturday\"}")" "200"
+check "they arrive as one item" "$(inbox "$DAVE" 'len(items)')" "1"
+check "counted once on the badge" "$(unread "$DAVE")" "1"
+check "in the order she picked, each once" "$(titles "$DAVE")" "Packing list,Kazbegi photos"
+check "with the note once" "$(inbox "$DAVE" "items[0]['note']")" "for saturday"
+
+many "$ALICE" dave "{\"links\":[\"$PHOTOS\"],\"note\":\"this one especially\"}" >/dev/null
+check "sending one of them again moves it into a new item" "$(titles "$DAVE")" "Kazbegi photos;Packing list"
+check "with its own note, the old item keeping its" "$(inbox "$DAVE" "items[0]['note'], items[1]['note']")" "this one especially for saturday"
+check "two sends, two unread" "$(unread "$DAVE")" "2"
+check "the single-link route files into the same inbox" \
+    "$(send "$ALICE" "$LOCKED" '{"username":"dave"}'),$(inbox "$DAVE" 'len(items)')" "200,3"
+
+many "$ALICE" dave "{\"links\":[\"$PACKING\",\"$LOCKED\"]}" >/dev/null
+GROUP=$(inbox "$DAVE" "items[0]['id']")
+check "dismissing an item" "$(code -b "$DAVE" -X DELETE "$BASE/api/inbox/items/$GROUP")" "200"
+check "dismisses every link in it" "$(inbox "$DAVE" "len(items), sum(len(i['cards']) for i in items)")" "1 1"
 
 echo
 echo "=== blocks hold ==="
