@@ -118,6 +118,24 @@ cd /srv/thearchive && git pull && docker compose -f deploy/docker-compose.yml up
 ```
 
 Schema migrations run automatically at startup, so there is no separate migration step.
+
+**Changes to `deploy/Caddyfile` are the exception.** The file is bind-mounted on its own,
+and a single-file bind mount is pinned to the file's inode — but `git pull` replaces a
+changed file with a new one, so the running container keeps reading the old config. The
+update command above does not help either: `up -d` only recreates containers whose
+compose definition changed. Neither fails; the edit is silently ignored. After pulling a
+Caddyfile change, validate it and restart Caddy so the mount is re-resolved:
+
+```bash
+cd /srv/thearchive/deploy
+docker run --rm -e ARCHIVE_DOMAIN=example.com -v "$PWD/Caddyfile:/etc/caddy/Caddyfile:ro" \
+    caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+docker compose restart caddy
+```
+
+`caddy reload` is not enough on its own, for the same reason — it would re-read the stale
+file and report success. The restart costs a second or two without HTTPS; certificates
+live in the `caddy_data` volume and are not re-issued.
 Only `deploy/.env` is host-specific; nothing else in the repo needs editing per
 deployment.
 
