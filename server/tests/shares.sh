@@ -432,6 +432,54 @@ for shape in \
 done
 
 echo
+echo "=== Content-Security-Policy ==="
+# Set by a pre-sending advice, so it should be on every shape of response — checked for
+# the same reason as the Server header above.
+csp_hdr() { curl -s -D - -o /dev/null "$@" | tr -d '\r' | grep -i '^content-security-policy:' || true; }
+for shape in \
+    "json|$BASE/api/shares/$TOKZ" \
+    "error|$BASE/api/shares/no-such-token" \
+    "file|$BASE/d/$TOKZ/$ZFID" \
+    "stream|$BASE/d/$TOKZ/all.zip" \
+    "thumbnail|$BASE/d/$TOKP/$PFID/thumb" \
+    "health|$BASE/healthz"; do
+    name=${shape%%|*}; args=${shape#*|}
+    # shellcheck disable=SC2086
+    csp_hdr $args | grep -q "script-src 'self'" && ok "CSP on a $name response" \
+        || bad "CSP on a $name response" "missing"
+done
+POLICY=$(csp_hdr "$BASE/healthz")
+# The two keywords that would quietly hollow the policy out.
+printf '%s' "$POLICY" | grep -q "unsafe-inline\|unsafe-eval" \
+    && bad "no unsafe-inline or unsafe-eval" "$POLICY" || ok "no unsafe-inline or unsafe-eval"
+printf '%s' "$POLICY" | grep -q "report-uri /api/csp-report" && ok "violations are reported" \
+    || bad "violations are reported" "$POLICY"
+
+echo
+echo "=== CSP violation reports ==="
+report() { curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/csp-report" \
+           -H 'Content-Type: application/csp-report' --data-binary "$1"; }
+check "a real report is accepted, with no session" \
+    "$(report '{"csp-report":{"document-uri":"https://example.test/chat","effective-directive":"style-src-attr","blocked-uri":"inline","source-file":"https://example.test/assets/index.js","line-number":42}}')" "204"
+grep -q "csp violation: style-src-attr blocked inline on https://example.test/chat at https://example.test/assets/index.js:42" \
+    "$WORK/server.log" && ok "and logged, one line, fields in order" \
+    || bad "and logged, one line, fields in order" "$(grep -i 'csp violation' "$WORK/server.log" | tail -1)"
+check "malformed JSON is refused" "$(report 'not json')" "400"
+check "JSON without a csp-report is refused" "$(report '{"something":"else"}')" "400"
+check "an oversized body is refused" \
+    "$(report "{\"csp-report\":{\"document-uri\":\"$(head -c 20000 /dev/zero | tr '\0' a)\"}}")" "413"
+check "only POST" \
+    "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/csp-report")" "405"
+# Reports come from anybody's browser, so they are attacker-controlled text on the way
+# into the log. A newline must not be able to start a line of its own.
+report '{"csp-report":{"document-uri":"https://x.test/\nFORGED-LOG-LINE admin logged in","effective-directive":"script-src"}}' >/dev/null
+sleep 0.3
+grep -q '^FORGED-LOG-LINE' "$WORK/server.log" && bad "a report cannot forge a log line" "it did" \
+    || ok "a report cannot forge a log line"
+grep -q 'https://x.test/?FORGED-LOG-LINE' "$WORK/server.log" && ok "the newline is neutralised in place" \
+    || bad "the newline is neutralised in place" "$(grep -i 'x.test' "$WORK/server.log")"
+
+echo
 echo "=== tus termination ==="
 head -c 131072 /dev/urandom > "$WORK/cancel.bin"
 CANCEL=$(sha256sum "$WORK/cancel.bin" | cut -d' ' -f1)

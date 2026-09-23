@@ -1,0 +1,8 @@
+{
+  "name": "csp-check",
+  "private": true,
+  "description": "Drives a real browser through the app under its Content-Security-Policy. See run.sh.",
+  "dependencies": {
+    "playwright": "^1.63.0"
+  }
+}

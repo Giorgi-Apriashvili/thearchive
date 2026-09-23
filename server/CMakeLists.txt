@@ -98,6 +98,7 @@ add_executable(thearchive
     src/admin.cc
     src/storage.cc
     src/chat.cc
+    src/csp.cc
 )
 
 target_include_directories(thearchive PRIVATE src)

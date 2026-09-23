@@ -91,6 +91,17 @@ Each drives a real server over HTTP; none needs a fixture or a mock.
 ./server/tests/chat.sh     # rooms, invitations, blocks, admin removal
 ```
 
+After any **frontend** change, also run the browser check before deploying:
+
+```bash
+./tools/csp-check/run.sh
+```
+
+It drives a real browser through the app under its Content-Security-Policy and fails on
+any violation. The API suites above check that the header is sent; only a browser can
+tell whether the frontend still works under it, and a CSP that blocks something does so
+silently. Setup is in the comment at the top of `run.sh`.
+
 On Windows, VS Code's own IntelliSense shows phantom errors in the C++ files: it has
 neither `sqlite3.h` nor libstdc++ on its include path. Open the folder through the WSL
 remote extension and use clangd, which reads the generated `compile_commands.json`.
