@@ -34,7 +34,12 @@ services:
     environment:
       ARCHIVE_DOMAIN: ${ARCHIVE_DOMAIN}
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # The directory, not the file. `git pull` replaces a changed file with a new
+      # inode, and a single-file bind mount stays pinned to the old one — the container
+      # would go on reading the previous config with no error anywhere. A directory
+      # mount shows the directory's current contents, so the pulled file is visible and
+      # a `caddy reload` picks it up with no restart. See the update command in README.
+      - ./caddy:/etc/caddy:ro
       - caddy_data:/data      # certificates and ACME account keys — losing this means re-issuing
       - caddy_config:/config
     depends_on: [app]
