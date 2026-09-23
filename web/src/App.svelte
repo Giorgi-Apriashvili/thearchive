@@ -4,6 +4,7 @@
   import Workspace from './routes/Workspace.svelte'
   import Download from './routes/Download.svelte'
   import Account from './routes/Account.svelte'
+  import Privacy from './routes/Privacy.svelte'
   import Admin from './routes/admin/Admin.svelte'
   import { router } from './lib/router.svelte'
 
@@ -14,6 +15,7 @@
   )
   const isAdminRoute = $derived(router.segments[0] === 'admin')
   const isAccountRoute = $derived(router.segments[0] === 'account')
+  const isPrivacyRoute = $derived(router.path === '/privacy')
 
   let me = $state<Me | null>(null)
   let ready = $state(false)
@@ -28,9 +30,10 @@
   }
 
   // A one-time decision at startup, so it reads the location directly rather than the
-  // reactive path: the public download page needs no session, and asking for one would
-  // just produce a 401 on every visit from a recipient who has no account.
-  if (/^\/d\/[A-Za-z0-9_-]+\/?$/.test(location.pathname)) {
+  // reactive path: the public download page and the privacy notice need no session, and
+  // asking for one would just produce a 401 on every visit from someone with no account —
+  // who, for both pages, is much of the audience.
+  if (/^\/d\/[A-Za-z0-9_-]+\/?$/.test(location.pathname) || location.pathname === '/privacy') {
     ready = true
   } else {
     loadSession()
@@ -40,6 +43,9 @@
 <main class="min-h-screen">
   {#if downloadToken}
     <Download token={downloadToken} />
+  {:else if isPrivacyRoute}
+    <!-- Before the session gate: readable by anyone, signed in or not. -->
+    <Privacy />
   {:else if !ready}
     <div class="flex min-h-screen items-center justify-center text-ink-500">Loading…</div>
   {:else if me && isAdminRoute}

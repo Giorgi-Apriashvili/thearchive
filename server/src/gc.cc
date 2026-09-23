@@ -236,9 +236,12 @@ GcStats runGarbageCollection(Database& db, const fs::path& dataDir) {
     return stats;
 }
 
+std::int64_t gcIntervalSeconds() {
+    return envInt("ARCHIVE_GC_INTERVAL_SECONDS", static_cast<std::int64_t>(kDefaultIntervalSeconds));
+}
+
 void scheduleGarbageCollection(Database& db, const fs::path& dataDir) {
-    const double interval = static_cast<double>(
-        envInt("ARCHIVE_GC_INTERVAL_SECONDS", static_cast<std::int64_t>(kDefaultIntervalSeconds)));
+    const double interval = static_cast<double>(gcIntervalSeconds());
 
     drogon::app().registerBeginningAdvice([&db, dataDir, interval]() {
         auto sweep = [&db, dataDir]() {

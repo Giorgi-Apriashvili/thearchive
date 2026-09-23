@@ -1,3 +1,15 @@
+# Log rotation, applied to both services. Docker's default keeps a container's log with
+# no size limit, and the app's log holds personal data — failed sign-ins are recorded
+# with the address they came from and the username typed. Rotation makes how long those
+# lines last a stated policy rather than an accident: at most three files of 10 MB, the
+# oldest discarded first. The log also goes whenever a container is recreated, which an
+# update does to the app; the privacy notice says both.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   app:
     build:
@@ -15,9 +27,18 @@ services:
       ARCHIVE_MAX_UPLOAD_BYTES: ${ARCHIVE_MAX_UPLOAD_BYTES:-21474836480}
       ARCHIVE_GC_INTERVAL_SECONDS: ${ARCHIVE_GC_INTERVAL_SECONDS:-900}
       ARCHIVE_BLOB_GRACE_SECONDS: ${ARCHIVE_BLOB_GRACE_SECONDS:-86400}
+      # The privacy notice at /privacy. Who runs the site lives here rather than in the
+      # source, which is public; see .env.example.
+      ARCHIVE_OPERATOR_NAME: ${ARCHIVE_OPERATOR_NAME:-}
+      ARCHIVE_OPERATOR_CONTACT: ${ARCHIVE_OPERATOR_CONTACT:-}
+      ARCHIVE_HOSTING_LOCATION: ${ARCHIVE_HOSTING_LOCATION:-}
+      # Read here only so the notice can state it; deploy/backup.sh applies it.
+      ARCHIVE_BACKUP_DAYS: ${ARCHIVE_BACKUP_DAYS:-14}
 
     volumes:
       - ${ARCHIVE_DATA_DIR}:/data
+
+    logging: *logging
 
     # Deliberately publishes no ports. A published container port is DNAT'd in
     # prerouting and never traverses the host firewall's input hook, so exposing the
@@ -44,6 +65,7 @@ services:
       - caddy_config:/config
     depends_on: [app]
     networks: [edge]
+    logging: *logging
 
 networks:
   edge:

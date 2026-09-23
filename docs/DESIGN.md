@@ -624,9 +624,16 @@ stay, still attributed, marked *former member*. `server/tests/chat.sh` deletes a
 mid-suite and asserts their messages survive, because this is exactly the kind of
 property a later "clean up the cascades" change would helpfully undo.
 
-Admin removal is soft: `deleted_at` / `deleted_by` are set and the row stays, so the
-client renders *"Removed by alice"* in place. Closing the gap instead would silently
-reflow a conversation around what was taken out, which is its own kind of dishonesty.
+Admin removal keeps the row and erases its contents: `deleted_at` / `deleted_by` are set,
+the body is overwritten and the message's mention records are deleted, so the client
+renders *"Removed by alice"* in place. Keeping the row keeps the conversation's shape —
+closing the gap would silently reflow a conversation around what was taken out, which is
+its own kind of dishonesty. Erasing the text is what "removed" has to mean.
+
+It did not always. Removal first only set `deleted_at`, leaving the text in the database —
+withheld by the API, but present in every backup — while the confirmation dialog told the
+admin it was gone for good. Migration 12 erases the text of messages removed before the
+fix; backups taken earlier still hold it until retention deletes them.
 
 ### Invitations and blocks
 
@@ -735,6 +742,44 @@ DOM, so it is worth naming rather than leaving to habit.
 The uploads pane stays mounted and is merely hidden when the chat tab is showing.
 Unmounting it would discard the queue, the progress and the upload ids of anything in
 flight — switching tabs mid-upload would quietly cost someone a 3 GB video.
+
+## Privacy
+
+The notice lives at `/privacy`. It is linked from the sign-in page, the download page and
+the workspace, and readable without an account, since link recipients are part of its
+audience. It was written from the code rather than from intentions. Every statement in it
+was checked against what the server stores, logs and deletes, and working through it found
+three things that made it untrue until they were fixed:
+
+- **Backups had no retention.** One was taken, by hand, before each deploy, and none was
+  ever deleted. `deploy/backup.sh` now takes a verified backup and prunes anything past
+  `ARCHIVE_BACKUP_DAYS` (14), and a systemd user timer (`deploy/install-backup-timer.sh`)
+  runs it daily. The schedule is what makes the period true: pruning only on deploy would
+  leave old backups in place through any quiet stretch. A backup is the database only —
+  files expire with their links, and copying them would keep what the notice says is
+  deleted.
+- **Log retention was an accident.** Docker kept container logs without limit, and since
+  the guessing limit the app's log holds addresses and attempted usernames. Compose now
+  rotates both services' logs at three files of 10 MB.
+- **Removed chat messages were not removed** — see above.
+
+**Who runs the site is configuration, not source.** `ARCHIVE_OPERATOR_NAME`,
+`ARCHIVE_OPERATOR_CONTACT` and the optional `ARCHIVE_HOSTING_LOCATION` come from
+`deploy/.env` through `GET /api/privacy`. The repository is public, and a name and email
+address committed to it would stay in its history for good. It also means every deployment
+states its own operator; one with none configured says so, rather than rendering blanks.
+
+**Every period the notice states is the one the server enforces.** `/api/privacy` reports
+the session length, link expiry and cap, sweep interval, unshared-upload lifetime and
+backup retention from the same constants and settings the code acts on. Several constants
+moved into headers for this. An upload never made into a link is stated at the later of
+its own expiry and the blob grace period, plus a sweep. The notice cannot say 30 days
+while the code does something else, because there is only one 30.
+
+What the notice leans on as evidence rather than promise: the strict CSP is why it can say
+"no third-party scripts, fonts or embeds", and `robots.txt` is why it can say crawlers are
+asked to stay away. Its legal-basis sentence is plain language, not legal advice; that is
+the part to have someone qualified read.
 
 ## Deliberately deferred
 

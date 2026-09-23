@@ -78,7 +78,7 @@ ARCHIVE_SECURE_COOKIES=0 ARCHIVE_DATA_DIR="$DATA" ARCHIVE_PORT=$PORT \
 PID=$!
 for _ in $(seq 1 60); do curl -sf "$BASE/healthz" >/dev/null 2>&1 && break; sleep 0.25; done
 
-check "schema migrated to v11" "$(curl -s "$BASE/healthz" | jf schema)" "11"
+check "schema migrated to v12" "$(curl -s "$BASE/healthz" | jf schema)" "12"
 
 curl -s -o /dev/null -c "$ALICE" -X POST "$BASE/api/auth/bootstrap" \
     -H 'Content-Type: application/json' \
@@ -222,6 +222,10 @@ check "an admin can" "$(code "$ALICE" DELETE "/api/chat/messages/$M3")" "200"
 check "removing it twice finds nothing to remove" \
     "$(code "$ALICE" DELETE "/api/chat/messages/$M3")" "404"
 check "the row stays" "$(sql "SELECT COUNT(*) FROM messages WHERE id=$M3;")" "1"
+# Removal erases rather than hides: the confirmation says the text is gone, and the
+# privacy notice repeats it, so it must not survive in the database behind the API.
+check "its text is erased from the database, not merely withheld" \
+    "$(sql "SELECT length(body) FROM messages WHERE id=$M3;")" "0"
 check "the body is replaced by a tombstone, and the gap is not closed" \
     "$(as "$BOB" GET "/api/chat/rooms/$ROOM/messages" | bodies | tr '\n' '|')" \
     "made it|who is bringing the tent|[removed by alice]|"

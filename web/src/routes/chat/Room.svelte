@@ -333,7 +333,7 @@
   {@const message = removing}
   <Confirm
     title="Remove this message?"
-    body="It stays in the room as “Removed by {me.username}”, and its text is gone for good. History is permanent here, so nothing is deleted quietly."
+    body="It stays in the room as “Removed by {me.username}”, and its text is erased from the database. Backups taken before now still hold it until they expire. History is permanent here, so nothing is deleted quietly."
     confirmLabel="Remove"
     danger={true}
     onConfirm={() => remove(message)}

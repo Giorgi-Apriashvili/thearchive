@@ -267,7 +267,21 @@ CREATE TABLE message_mentions (
 CREATE INDEX idx_mentions_user ON message_mentions(user_id, message_id);
 )SQL";
 
-constexpr std::array<Migration, 11> kMigrations{{
+// Erase what earlier removals only hid. Until now, removing a chat message set its
+// deleted_at and left the text in place, withheld by the API but still in the database
+// and in every backup — while the confirmation told the admin it was gone for good.
+// Removal now erases; this brings messages removed before that into line, so the
+// promise holds for them too. Their mention records go with them.
+//
+// Backups taken before this ran still hold that text until they age out, which the
+// retention period bounds.
+constexpr const char* kSchemaV12 = R"SQL(
+UPDATE messages SET body = '' WHERE deleted_at IS NOT NULL AND body != '';
+DELETE FROM message_mentions
+ WHERE message_id IN (SELECT id FROM messages WHERE deleted_at IS NOT NULL);
+)SQL";
+
+constexpr std::array<Migration, 12> kMigrations{{
     {1, kSchemaV1},
     {2, kSchemaV2},
     {3, kSchemaV3},
@@ -279,6 +293,7 @@ constexpr std::array<Migration, 11> kMigrations{{
     {9, kSchemaV9},
     {10, kSchemaV10},
     {11, kSchemaV11},
+    {12, kSchemaV12},
 }};
 
 }  // namespace

@@ -598,14 +598,24 @@ void registerChatRoutes(Database& db, Auth& auth) {
                      const std::string& id) {
             callback(guarded([&] {
                 const User user = requireAdmin(req, auth);
+                const std::int64_t messageId = parseId(id, "message");
+
+                // Removal erases. The row stays, as the tombstone that keeps the
+                // conversation's shape, but its text is overwritten and its mentions go:
+                // the confirmation promises the text is gone for good, and the privacy
+                // notice repeats that, so leaving it in the database — hidden only by the
+                // API declining to serve it — would make both untrue.
+                Transaction tx{db};
                 auto stmt = db.prepare(
-                    "UPDATE messages SET deleted_at = ?, deleted_by = ? "
+                    "UPDATE messages SET deleted_at = ?, deleted_by = ?, body = '' "
                     "WHERE id = ? AND deleted_at IS NULL");
-                stmt.bind(1, nowSeconds()).bind(2, user.id)
-                    .bind(3, parseId(id, "message")).run();
+                stmt.bind(1, nowSeconds()).bind(2, user.id).bind(3, messageId).run();
                 if (db.changes() == 0) {
                     throw HttpError{404, "no such message"};
                 }
+                auto mentions = db.prepare("DELETE FROM message_mentions WHERE message_id = ?");
+                mentions.bind(1, messageId).run();
+                tx.commit();
                 Json::Value out;
                 out["deleted"] = true;
                 return drogon::HttpResponse::newHttpJsonResponse(out);

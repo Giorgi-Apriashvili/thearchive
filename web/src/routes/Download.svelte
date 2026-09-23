@@ -2,6 +2,7 @@
   import { api, ApiError, type ShareDetail } from '../lib/api'
   import { bytes, shortDate, until } from '../lib/format'
   import Lightbox from '../lib/Lightbox.svelte'
+  import { link } from '../lib/router.svelte'
 
   let { token }: { token: string } = $props()
 
@@ -190,6 +191,10 @@
       {error || 'This link has expired or never existed.'}
     </p>
   {/if}
+
+  <footer class="mt-16 border-t border-ink-800 pt-4 text-xs">
+    <a href="/privacy" onclick={(e) => link(e, '/privacy')} class="text-ink-500 underline-offset-2 hover:text-ink-300 hover:underline">Privacy</a>
+  </footer>
 </div>
 
 {#if viewerIndex >= 0}

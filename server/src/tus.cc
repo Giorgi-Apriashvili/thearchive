@@ -24,7 +24,6 @@ namespace {
 namespace fs = std::filesystem;
 
 constexpr const char* kTusVersion = "1.0.0";
-constexpr std::int64_t kUploadTtlSeconds = 24 * 3600;
 
 Json::Value errorBody(const std::string& message) {
     Json::Value body;

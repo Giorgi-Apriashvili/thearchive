@@ -112,6 +112,10 @@
   {#if tab === 'chat'}
     <Chat {me} />
   {/if}
+
+  <footer class="mt-16 border-t border-ink-800 pt-4 text-xs">
+    <a href="/privacy" onclick={(e) => link(e, '/privacy')} class="text-ink-500 underline-offset-2 hover:text-ink-300 hover:underline">Privacy</a>
+  </footer>
 </div>
 
 {#if confirmingInvite}

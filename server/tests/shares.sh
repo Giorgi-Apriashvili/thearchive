@@ -480,6 +480,16 @@ grep -q 'https://x.test/?FORGED-LOG-LINE' "$WORK/server.log" && ok "the newline 
     || bad "the newline is neutralised in place" "$(grep -i 'x.test' "$WORK/server.log")"
 
 echo
+echo "=== the privacy notice with no operator configured ==="
+check "operator is null rather than blank" \
+    "$(curl -s "$BASE/api/privacy" | python3 -c "import sys,json;print(json.load(sys.stdin)['operator'])")" "None"
+check "and no location is claimed" \
+    "$(curl -s "$BASE/api/privacy" | python3 -c "import sys,json;print('hosting_location' in json.load(sys.stdin))")" "False"
+# This server sweeps every 2s with a 1h grace: the notice follows the settings in force.
+check "retention follows this server's settings" \
+    "$(curl -s "$BASE/api/privacy" | python3 -c "import sys,json;r=json.load(sys.stdin)['retention'];print(r['sweep_minutes'], r['unshared_upload_hours'])")" "1 25"
+
+echo
 echo "=== share passwords are limited ==="
 # A share password is checked with no account at all, which makes it the easiest place
 # to guess from. The limiter itself is the one login uses and smoke.sh covers its

@@ -11,6 +11,10 @@ namespace archive {
 // Largest single upload accepted, advertised to clients as Tus-Max-Size.
 std::int64_t maxUploadBytes();
 
+// How long an upload may sit, finished or not, before it is discarded unless it has been
+// made into a link. Public because the privacy notice states it.
+inline constexpr std::int64_t kUploadTtlSeconds = 24 * 3600;
+
 // Registers the tus 1.0.0 endpoints:
 //   OPTIONS /files        capability discovery
 //   POST    /files        create an upload, returns Location

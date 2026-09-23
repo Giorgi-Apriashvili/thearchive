@@ -31,6 +31,8 @@ hdr() { local k; k=$(printf '%s' "$1" | tr 'A-Z' 'a-z'); tr -d '\r' \
 
 # Secure cookies are discarded by clients over plain http, so login would never persist.
 ARCHIVE_SECURE_COOKIES=0 ARCHIVE_DATA_DIR="$DATA" ARCHIVE_PORT=$PORT \
+ARCHIVE_OPERATOR_NAME="Jane Doe" ARCHIVE_OPERATOR_CONTACT=jane@example.test \
+ARCHIVE_HOSTING_LOCATION="the European Union" \
     "$BIN" >"$WORK/server.log" 2>&1 &
 PID=$!
 for _ in $(seq 1 60); do curl -sf "$BASE/healthz" >/dev/null 2>&1 && break; sleep 0.25; done
@@ -350,6 +352,30 @@ check "oversized upload refused" "$code" "413"
 
 code=$(curl -s -o /dev/null -w '%{http_code}' -b "$JAR" -X HEAD "$BASE/files/does-not-exist")
 check "unknown upload is 404" "$code" "404"
+
+echo
+echo "=== the privacy notice ==="
+# /api/privacy feeds the page at /privacy. It must be readable with no account — the
+# people most in need of it are recipients of a link — and every period it states must be
+# the one the server enforces.
+priv() { curl -s "$BASE/api/privacy" | python3 -c "import sys,json;d=json.load(sys.stdin);print($1)"; }
+check "readable with no session" \
+    "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/privacy")" "200"
+check "names the operator from the environment" "$(priv "d['operator']['name']")" "Jane Doe"
+check "and how to reach them" "$(priv "d['operator']['contact']")" "jane@example.test"
+check "and where the data is kept" "$(priv "d['hosting_location']")" "the European Union"
+check "session length is the enforced one" "$(priv "d['retention']['session_days']")" "30"
+check "so is link expiry" "$(priv "d['retention']['link_default_days']"),$(priv "d['retention']['link_max_days']")" "30,365"
+# Default sweep every 900s; an unshared upload goes at max(24h expiry, 24h grace) plus a
+# sweep, rounded up to whole hours.
+check "sweep interval from the setting in force" "$(priv "d['retention']['sweep_minutes']")" "15"
+check "unshared uploads: the later of expiry and grace, plus a sweep" \
+    "$(priv "d['retention']['unshared_upload_hours']")" "25"
+check "backup retention defaults to what backup.sh applies" "$(priv "d['retention']['backup_days']")" "14"
+# The session cookie really is the only cookie the notice can claim.
+COOKIES=$(curl -s -D - -o /dev/null -X POST "$BASE/api/auth/login" -H 'Content-Type: application/json' \
+    -d '{"username":"alice","password":"correct-horse-battery"}' | tr -d '\r' | grep -ci '^set-cookie:')
+check "signing in sets exactly one cookie" "$COOKIES" "1"
 
 echo
 echo "=== password guessing is limited ==="

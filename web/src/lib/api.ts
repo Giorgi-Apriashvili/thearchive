@@ -170,6 +170,22 @@ export interface ChatBlocks {
   users: { id: number; username: string }[]
 }
 
+/** What the privacy notice needs from the deployment. Every retention figure is the one
+ *  the server enforces, not a copy — see server/src/privacy.cc. */
+export interface PrivacyInfo {
+  /** Null when this deployment has not named anyone. */
+  operator: { name: string; contact: string } | null
+  hosting_location?: string
+  retention: {
+    session_days: number
+    link_default_days: number
+    link_max_days: number
+    sweep_minutes: number
+    unshared_upload_hours: number
+    backup_days: number
+  }
+}
+
 export interface CreatedShare {
   token: string
   url: string
