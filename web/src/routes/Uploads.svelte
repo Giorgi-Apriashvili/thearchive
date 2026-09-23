@@ -35,13 +35,24 @@
   })
 
   interface Item {
-    file: File
+    key: string
+    name: string
     uploadId: string | null
     sent: number
     total: number
     status: 'uploading' | 'done' | 'error'
     error?: string
     handle?: tus.Upload
+    /** Set on a file uploaded earlier — in a tab since closed, or on another device — and
+     *  offered again from the server. It is deleted at this time unless made into a link. */
+    expiresAt?: number
+  }
+
+  interface PendingUpload {
+    id: string
+    filename: string
+    size: number
+    expires_at: number
   }
 
   let items = $state<Item[]>([])
@@ -63,6 +74,36 @@
   const ready = $derived(items.filter((i) => i.status === 'done' && i.uploadId))
   const busy = $derived(items.some((i) => i.status === 'uploading'))
   const totalBytes = $derived(items.reduce((sum, i) => sum + i.total, 0))
+  const earliestExpiry = $derived(
+    Math.min(...items.flatMap((i) => (i.expiresAt ? [i.expiresAt] : []))),
+  )
+
+  // Finished uploads that never became a link live only on the server once their tab is
+  // closed. Offer them again whenever this pane comes into view, so closing the tab before
+  // pressing "Create link" costs nothing — for as long as they have not expired.
+  async function loadPending() {
+    try {
+      const { uploads } = await api.get<{ uploads: PendingUpload[] }>('/api/uploads')
+      const known = new Set(items.map((i) => i.uploadId))
+      for (const upload of uploads) {
+        if (known.has(upload.id)) continue
+        items.push({
+          key: `upload:${upload.id}`,
+          name: upload.filename,
+          uploadId: upload.id,
+          sent: upload.size,
+          total: upload.size,
+          status: 'done',
+          expiresAt: upload.expires_at,
+        })
+      }
+    } catch {
+      // Nothing to offer, or offline; the next time the pane is shown tries again.
+    }
+  }
+  $effect(() => {
+    if (visible) void loadPending()
+  })
 
   let storage = $state<StorageInfo | null>(null)
 
@@ -99,13 +140,22 @@
     }
   })
 
+  let nextKey = 0
+
   function enqueue(files: FileList | File[]) {
     for (const file of Array.from(files)) {
       // Push first, then read the element back. $state deep-proxies array contents, and
       // the object literal above is the raw target — mutating it from the callbacks
       // below would update the data without notifying the proxy's signals, leaving
       // progress stuck at 0% and the file never appearing as finished.
-      items.push({ file, uploadId: null, sent: 0, total: file.size, status: 'uploading' })
+      items.push({
+        key: `file:${nextKey++}`,
+        name: file.name,
+        uploadId: null,
+        sent: 0,
+        total: file.size,
+        status: 'uploading',
+      })
       const item = items[items.length - 1]
 
       const handle = new tus.Upload(file, {
@@ -300,11 +350,17 @@
 </div>
 
 {#if items.length}
+  {#if Number.isFinite(earliestExpiry)}
+    <p class="mt-6 rounded-lg border border-accent/40 bg-accent/5 px-3 py-2 text-sm text-ink-300">
+      You uploaded these earlier but never made a link. Create one within
+      {until(earliestExpiry)}, or they are deleted.
+    </p>
+  {/if}
   <ul class="mt-6 space-y-2">
-    {#each items as item (item.file.name + item.file.lastModified + item.total)}
+    {#each items as item (item.key)}
       <li class="rounded-lg border border-ink-700 bg-ink-900 px-3 py-2">
         <div class="flex items-center justify-between gap-3 text-sm">
-          <span class="truncate">{item.file.name}</span>
+          <span class="truncate">{item.name}</span>
           <span class="tnum shrink-0 text-xs text-ink-500">
             {#if item.status === 'error'}
               <span class="text-red-400">{item.error}</span>

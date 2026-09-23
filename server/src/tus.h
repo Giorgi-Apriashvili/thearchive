@@ -20,6 +20,11 @@ inline constexpr std::int64_t kUploadTtlSeconds = 24 * 3600;
 //   POST    /files        create an upload, returns Location
 //   HEAD    /files/{id}   current Upload-Offset, so a client knows where to resume
 //   PATCH   /files/{id}   append bytes at Upload-Offset
+//   GET     /api/uploads  your finished uploads not yet made into a link
+//
+// The last exists so that finished files outlive the tab they were uploaded from: close it
+// before creating the link, and the files are still offered on the next visit — from any
+// device — until they expire, rather than sitting on disk where nothing can reach them.
 //
 // On completion the file is hashed and promoted into the content-addressed blob store,
 // which is where deduplication happens.

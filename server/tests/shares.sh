@@ -53,7 +53,7 @@ curl -s -o /dev/null -c "$JAR" -X POST "$BASE/api/auth/bootstrap" \
 upload() {
     local file="$1" size meta loc
     size=$(stat -c%s "$file")
-    meta="filename $(basename "$file" | base64 -w0),lastModified $(printf '1700000000000' | base64 -w0),relativePath $(printf 'sat/%s' "$(basename "$file")" | base64 -w0)"
+    meta="filename $(printf %s "$(basename "$file")" | base64 -w0),lastModified $(printf '1700000000000' | base64 -w0),relativePath $(printf 'sat/%s' "$(basename "$file")" | base64 -w0)"
     loc=$(curl -s -D - -o /dev/null -b "$JAR" -X POST "$BASE/files" \
         -H "Upload-Length: $size" -H "Upload-Metadata: $meta" | hdr Location)
     curl -s -o /dev/null -b "$JAR" -X PATCH "$BASE$loc" \
@@ -544,6 +544,32 @@ check "nine failed sign-ins and one wrong share password exhaust one budget" \
     "$(share_from 203.0.113.60 "$TOKB" budget-share)" "429"
 
 echo
+echo "=== unlinked uploads are offered again ==="
+# Closing the tab before "Create link" must not strand finished files out of reach.
+pending() { curl -s -b "$1" "$BASE/api/uploads" | python3 -c "import sys,json;print($2)"; }
+check "needs a session" "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/uploads")" "401"
+check "none to begin with" "$(pending "$JAR" "len(json.load(sys.stdin)['uploads'])")" "0"
+head -c 65536 /dev/urandom > "$WORK/left.bin"
+LEFT=$(upload "$WORK/left.bin")
+check "a finished upload is listed" \
+    "$(pending "$JAR" "[(u['id'], u['filename'], u['size']) for u in json.load(sys.stdin)['uploads']]")" "[('$LEFT', 'left.bin', 65536)]"
+check "with when it will be deleted" \
+    "$(pending "$JAR" "json.load(sys.stdin)['uploads'][0]['expires_at'] > 0")" "True"
+HALF=$(curl -s -D - -o /dev/null -b "$JAR" -X POST "$BASE/files" \
+    -H "Upload-Length: 65536" -H "Upload-Metadata: filename $(printf 'half.bin' | base64 -w0)" | hdr Location)
+check "an unfinished one is not" "$(pending "$JAR" "len(json.load(sys.stdin)['uploads'])")" "1"
+INVP=$(curl -s -b "$JAR" -X POST "$BASE/api/invites" | jget code)
+PEER=$(mktemp)
+curl -s -o /dev/null -c "$PEER" -X POST "$BASE/api/auth/register" \
+    -H 'Content-Type: application/json' \
+    -d "{\"invite\":\"$INVP\",\"username\":\"peer\",\"password\":\"correct-horse-battery\"}"
+check "nor are they anyone else's" "$(pending "$PEER" "len(json.load(sys.stdin)['uploads'])")" "0"
+rm -f "$PEER"
+curl -s -o /dev/null -b "$JAR" -X POST "$BASE/api/shares" -H 'Content-Type: application/json' \
+    -d "{\"uploads\":[\"$LEFT\"]}"
+check "once made into a link it is no longer offered" "$(pending "$JAR" "len(json.load(sys.stdin)['uploads'])")" "0"
+curl -s -o /dev/null -b "$JAR" -X DELETE "$BASE$HALF"
+
 echo "=== tus termination ==="
 head -c 131072 /dev/urandom > "$WORK/cancel.bin"
 CANCEL=$(sha256sum "$WORK/cancel.bin" | cut -d' ' -f1)

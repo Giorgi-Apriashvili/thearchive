@@ -14,6 +14,7 @@
 #include <string>
 
 #include "crypto.h"
+#include "httputil.h"
 #include "mimetype.h"
 #include "storage.h"
 #include "thumbnail.h"
@@ -496,6 +497,41 @@ void registerUploadRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
             }));
         },
         {drogon::Get, drogon::Head, drogon::Patch, drogon::Delete});
+
+    app.registerHandler(
+        "/api/uploads",
+        [&db, &auth](const drogon::HttpRequestPtr& req,
+                     std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
+            callback(guarded([&] {
+                const User user = requireUser(req, auth);
+                // Finished only: an unfinished upload cannot go into a link, and resuming
+                // one needs the file itself, which only the browser that picked it has.
+                auto stmt = db.prepare(
+                    "SELECT id, COALESCE(filename, 'download'), total_size, "
+                    "       COALESCE(relative_path, ''), expires_at "
+                    "FROM uploads WHERE owner_id = ? AND completed_at IS NOT NULL "
+                    "ORDER BY created_at, id");
+                stmt.bind(1, user.id);
+                Json::Value uploads{Json::arrayValue};
+                while (stmt.step()) {
+                    Json::Value upload;
+                    upload["id"] = stmt.columnText(0);
+                    upload["filename"] = stmt.columnText(1);
+                    upload["size"] = static_cast<Json::Int64>(stmt.columnInt(2));
+                    if (const std::string path = stmt.columnText(3); !path.empty()) {
+                        upload["relative_path"] = path;
+                    }
+                    upload["expires_at"] = static_cast<Json::Int64>(stmt.columnInt(4));
+                    uploads.append(upload);
+                }
+                Json::Value out;
+                out["uploads"] = uploads;
+                auto resp = drogon::HttpResponse::newHttpJsonResponse(out);
+                resp->addHeader("Cache-Control", "no-store");
+                return resp;
+            }));
+        },
+        {drogon::Get});
 }
 
 }  // namespace archive
