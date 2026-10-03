@@ -193,7 +193,13 @@ Orphan deletion removes the database row *before* unlinking the file. The revers
 would leave a row pointing at a missing file if the process died in between, surfacing as
 a broken download; this order can only leak a file, which is harmless and recoverable.
 
-Expiry is 1–365 days, defaulting to 30. Optional `max_downloads`, optional per-share
+Expiry is 1–365 days, defaulting to 30. The owner can change it while the link still
+works (`PATCH /api/shares/{token}` with `expires_days`), counted from that moment as at
+creation, so it can shorten a link as well as extend it — and a link kept extended can
+outlive 365 days in total, which the privacy notice says. An expired link cannot be
+brought back: the sweep releases its files within minutes, and reviving one in that window
+would race it, so the update re-checks expiry in the statement itself and the sweep wins.
+Optional `max_downloads`, optional per-share
 password (argon2id). Only a request starting at byte zero counts as a download, so a
 video player seeking does not exhaust the limit — which makes `max_downloads` a courtesy
 limit rather than a hard control.
@@ -443,6 +449,7 @@ Two host-level details are worth planning around rather than discovering:
 | `POST` | `/api/shares` | bundle completed uploads into a link |
 | `GET` | `/api/shares` | list your own |
 | `DELETE` | `/api/shares/{token}` | revoke early |
+| `PATCH` | `/api/shares/{token}` | `{visibility?, expires_days?}` — your own; expiry only while it works |
 | `DELETE` | `/api/shares/{token}/files/{id}` | remove one file; revokes the share if it was the last |
 | `GET` | `/api/storage` | usage and free space |
 | `GET` | `/api/shares/{token}` | share metadata (public) |

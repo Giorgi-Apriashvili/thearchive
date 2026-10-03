@@ -289,6 +289,45 @@ printf '%s' "$adminshare" | grep -q '"visibility"' && ok "admin listing exposes 
 printf '%s' "$adminshare" | grep -q '"url":"https://archive.example.com/d/' \
     && ok "admin listing builds a shareable url" \
     || bad "admin listing builds a shareable url" "absent"
+
+echo "=== changing when a link expires ==="
+expiry() { curl -s -o /dev/null -w '%{http_code}' -b "$1" -X PATCH "$BASE/api/shares/$2" \
+           -H 'Content-Type: application/json' -d "$3"; }
+expires_in_days() { sql "SELECT (expires_at - strftime('%s','now') + 60) / 86400 FROM shares WHERE token='$1';"; }
+check "owner extends a link to a year" "$(expiry "$JAR" "$TOKV" '{"expires_days":365}')" "200"
+check "counted from now" "$(expires_in_days "$TOKV")" "365"
+check "the response carries the new time" \
+    "$(curl -s -b "$JAR" -X PATCH "$BASE/api/shares/$TOKV" -H 'Content-Type: application/json' \
+       -d '{"expires_days":7}' | python3 -c "import sys,json;print(json.load(sys.stdin)['expires_at'])")" \
+    "$(sql "SELECT expires_at FROM shares WHERE token='$TOKV';")"
+check "and shortens one as readily" "$(expires_in_days "$TOKV")" "7"
+check "visibility is left alone" "$(sql "SELECT visibility FROM shares WHERE token='$TOKV';")" "private"
+check "the listing shows the new expiry" \
+    "$(curl -s -b "$JAR" "$BASE/api/shares" | python3 -c "import sys,json;print([s['expires_at'] for s in json.load(sys.stdin) if s['token']=='$TOKV'][0])")" \
+    "$(sql "SELECT expires_at FROM shares WHERE token='$TOKV';")"
+check "both at once" "$(expiry "$JAR" "$TOKV" '{"expires_days":30,"visibility":"public"}'),$(expires_in_days "$TOKV"),$(sql "SELECT visibility FROM shares WHERE token='$TOKV';")" "200,30,public"
+expiry "$JAR" "$TOKV" '{"visibility":"private"}' >/dev/null
+check "zero days is refused" "$(expiry "$JAR" "$TOKV" '{"expires_days":0}')" "400"
+check "as is more than a year" "$(expiry "$JAR" "$TOKV" '{"expires_days":366}')" "400"
+check "and a non-number" "$(expiry "$JAR" "$TOKV" '{"expires_days":"7"}')" "400"
+check "a body asking for nothing" "$(expiry "$JAR" "$TOKV" '{}')" "400"
+check "none of which changed it" "$(expires_in_days "$TOKV")" "30"
+# An invalid half refuses the whole request rather than applying the other half.
+check "a bad visibility beside a good expiry changes neither" \
+    "$(expiry "$JAR" "$TOKV" '{"expires_days":1,"visibility":"sort-of"}'),$(expires_in_days "$TOKV")" "400,30"
+check "another member cannot change it" "$(expiry "$OTHER" "$TOKV" '{"expires_days":365}'),$(expires_in_days "$TOKV")" "404,30"
+check "nor can someone signed out" "$(expiry /dev/null "$TOKV" '{"expires_days":365}')" "401"
+
+# Its own file, so the sweep releasing it leaves the refcounts below untouched.
+head -c 4096 /dev/urandom > "$WORK/lapsed.bin"
+LAPSED=$(curl -s -b "$JAR" -X POST "$BASE/api/shares" -H 'Content-Type: application/json' \
+    -d "{\"uploads\":[\"$(upload "$WORK/lapsed.bin")\"]}" | jget token)
+sql "UPDATE shares SET expires_at = strftime('%s','now') - 1 WHERE token='$LAPSED';"
+check "an expired link cannot be brought back" "$(expiry "$JAR" "$LAPSED" '{"expires_days":30}')" "409"
+check "it stays expired" "$(curl -s -o /dev/null -w '%{http_code}' -b "$JAR" "$BASE/api/shares/$LAPSED")" "404"
+check "though its visibility can still be set" "$(expiry "$JAR" "$LAPSED" '{"visibility":"public"}')" "200"
+curl -s -o /dev/null -b "$JAR" -X DELETE "$BASE/api/shares/$LAPSED"
+check "nor can a revoked one" "$(expiry "$JAR" "$LAPSED" '{"expires_days":30}')" "404"
 rm -f "$OTHER"
 
 echo

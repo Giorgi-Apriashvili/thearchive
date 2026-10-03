@@ -10,13 +10,26 @@ export function bytes(value: number): string {
   return `${n < 10 ? n.toFixed(1) : Math.round(n)} ${units[unit]}`
 }
 
+/** How long a link can be set to last, counted from now: at creation, and when changed. */
+export const expiryChoices: { days: number; label: string }[] = [
+  { days: 1, label: '1 day' },
+  { days: 7, label: '7 days' },
+  { days: 30, label: '30 days' },
+  { days: 90, label: '90 days' },
+  { days: 365, label: '1 year' },
+]
+
 // Coarse on purpose: the only question a share link raises is roughly how long is left,
 // and "in 29 days" reads better than a timestamp nobody will do arithmetic on.
 export function until(epochSeconds: number): string {
   const seconds = epochSeconds - Date.now() / 1000
   if (seconds <= 0) return 'expired'
-  const days = Math.floor(seconds / 86400)
-  if (days >= 1) return `${days} day${days === 1 ? '' : 's'}`
+  // Nearest day rather than whole days elapsed: a link set to last 7 days should say
+  // 7 days, not 6 days and 23 hours rounded down to 6.
+  if (seconds >= 86400) {
+    const days = Math.round(seconds / 86400)
+    return `${days} day${days === 1 ? '' : 's'}`
+  }
   const hours = Math.floor(seconds / 3600)
   if (hours >= 1) return `${hours} hour${hours === 1 ? '' : 's'}`
   const minutes = Math.max(1, Math.floor(seconds / 60))

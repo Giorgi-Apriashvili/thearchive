@@ -174,8 +174,10 @@
         <ul>
           <li>
             <strong>Files</strong> stay until the link they are in expires — after
-            {days(r.link_default_days)} unless its creator chose otherwise, and never more than
-            {days(r.link_max_days)} — or is revoked, whichever comes first. They are then deleted
+            {days(r.link_default_days)} unless its creator chose otherwise — or is revoked,
+            whichever comes first. A link can be set to last at most {days(r.link_max_days)} at a
+            time; its creator can change that while it still works, and each change counts from
+            that moment. They are then deleted
             within {minutes(r.sweep_minutes)}, unless the same file is still in another link that
             has not expired. Previews go with their file. Anything uploaded but never made into a
             link is deleted within {hours(r.unshared_upload_hours)}.

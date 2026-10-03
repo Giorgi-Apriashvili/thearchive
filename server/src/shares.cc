@@ -5,6 +5,7 @@
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
+#include <optional>
 #include <set>
 #include <string>
 #include <string_view>
@@ -636,30 +637,76 @@ void registerShareRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
 
                 if (req->method() == drogon::Patch) {
                     const User user = requireUser(req, auth);
-
                     std::shared_ptr<Json::Value> holder;
-                    const std::string wanted =
-                        requireString(requireJson(req, holder), "visibility");
-                    // Validated rather than stored as given: authoriseShare treats
-                    // anything that is not exactly "public" as private, so a typo would
-                    // fail closed — safely, but silently, and the owner would believe
-                    // they had published something they had not.
-                    if (wanted != "private" && wanted != "public") {
-                        throw HttpError{400, "visibility must be private or public"};
+                    const Json::Value& json = requireJson(req, holder);
+                    if (!json.isMember("visibility") && !json.isMember("expires_days")) {
+                        throw HttpError{400, "nothing to change: give visibility or expires_days"};
                     }
 
-                    // Owner-scoped, as with the delete above: the WHERE clause is the
-                    // authorisation, and one 404 covers both "no such share" and "not
-                    // yours" rather than confirming someone else's token exists.
-                    auto stmt = db.prepare(
-                        "UPDATE shares SET visibility = ? WHERE token = ? "
-                        "AND owner_id = ? AND deleted_at IS NULL");
-                    stmt.bind(1, wanted).bind(2, token).bind(3, user.id).run();
-                    if (db.changes() == 0) {
+                    std::optional<std::string> wanted;
+                    if (json.isMember("visibility")) {
+                        wanted = requireString(json, "visibility");
+                        // Validated rather than stored as given: authoriseShare treats
+                        // anything that is not exactly "public" as private, so a typo
+                        // would fail closed — safely, but silently, and the owner would
+                        // believe they had published something they had not.
+                        if (*wanted != "private" && *wanted != "public") {
+                            throw HttpError{400, "visibility must be private or public"};
+                        }
+                    }
+                    // Counted from now, as at creation: "a week" means a week from when
+                    // you said it. Shortening is allowed as much as extending.
+                    std::optional<std::int64_t> expiresAt;
+                    if (json.isMember("expires_days")) {
+                        expiresAt = nowSeconds() + std::int64_t{clampExpiryDays(json)} * 86400;
+                    }
+
+                    // Owner-scoped: the WHERE clause is the authorisation, and one 404
+                    // covers both "no such share" and "not yours" rather than confirming
+                    // someone else's token exists.
+                    auto find = db.prepare(
+                        "SELECT id, released_at IS NULL AND expires_at > ? FROM shares "
+                        "WHERE token = ? AND owner_id = ? AND deleted_at IS NULL");
+                    find.bind(1, nowSeconds()).bind(2, token).bind(3, user.id);
+                    if (!find.step()) {
                         throw HttpError{404, "no such share"};
                     }
+                    const std::int64_t shareId = find.columnInt(0);
+                    // An expired link cannot be brought back: the sweep releases its
+                    // files within minutes of expiry, and reviving one in that window
+                    // would race it. The files can go out again as a new link.
+                    if (expiresAt && find.columnInt(1) == 0) {
+                        throw HttpError{409, "this link has already expired"};
+                    }
+
+                    Transaction tx{db};
+                    if (wanted) {
+                        auto stmt = db.prepare("UPDATE shares SET visibility = ? WHERE id = ?");
+                        stmt.bind(1, *wanted).bind(2, shareId).run();
+                    }
+                    if (expiresAt) {
+                        // Guarded again in the statement itself, so a sweep that released
+                        // the share since the check above wins rather than being undone.
+                        auto stmt = db.prepare(
+                            "UPDATE shares SET expires_at = ? "
+                            "WHERE id = ? AND released_at IS NULL AND expires_at > ?");
+                        stmt.bind(1, *expiresAt).bind(2, shareId).bind(3, nowSeconds()).run();
+                        if (db.changes() == 0) {
+                            throw HttpError{409, "this link has already expired"};
+                        }
+                    }
+                    tx.commit();
+
+                    auto read = db.prepare("SELECT visibility, expires_at FROM shares WHERE id = ?");
+                    read.bind(1, shareId);
+                    read.step();
                     Json::Value out;
-                    out["visibility"] = wanted;
+                    out["visibility"] = read.columnText(0);
+                    out["expires_at"] = static_cast<Json::Int64>(read.columnInt(1));
+                    if (expiresAt) {
+                        LOG_INFO << "share " << shareId << " expiry set to " << *expiresAt
+                                 << " by user " << user.id;
+                    }
                     return drogon::HttpResponse::newHttpJsonResponse(out);
                 }
 

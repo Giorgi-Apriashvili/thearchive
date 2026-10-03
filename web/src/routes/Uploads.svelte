@@ -10,9 +10,10 @@
     type ShareSummary,
     type StorageInfo,
   } from '../lib/api'
-  import { bytes, chatTime, until } from '../lib/format'
+  import { bytes, chatTime, expiryChoices, until } from '../lib/format'
   import { inbox } from '../lib/inbox.svelte'
   import VisibilityToggle from '../lib/VisibilityToggle.svelte'
+  import ExpiryEditor from '../lib/ExpiryEditor.svelte'
   import Avatar from '../lib/Avatar.svelte'
   import MemberName from '../lib/MemberName.svelte'
   import ShareCard from '../lib/ShareCard.svelte'
@@ -401,11 +402,9 @@
         bind:value={expiresDays}
         class="mt-1 w-full rounded-lg border border-ink-700 bg-ink-900 px-3 py-2 text-sm outline-none focus:border-accent"
       >
-        <option value={1}>1 day</option>
-        <option value={7}>7 days</option>
-        <option value={30}>30 days</option>
-        <option value={90}>90 days</option>
-        <option value={365}>1 year</option>
+        {#each expiryChoices as choice (choice.days)}
+          <option value={choice.days}>{choice.label}</option>
+        {/each}
       </select>
     </label>
     <label class="block">
@@ -589,6 +588,11 @@
                   Removing the last file revokes the link.
                 </p>
               {/if}
+              <ExpiryEditor
+                token={share.token}
+                expiresAt={share.expires_at}
+                onChanged={(next) => (share.expires_at = next)}
+              />
             {/if}
           {/if}
         </li>

@@ -78,6 +78,14 @@ const PASS = 'correct-horse-battery'
     await page.getByText('photo.jpg').first().waitFor()
   })
 
+  await step('change when a link expires', async () => {
+    await page.getByText(/Expires .*, in \d+ days?\./).waitFor()
+    await page.getByRole('combobox').filter({ hasText: 'from now' }).selectOption('365')
+    await page.getByRole('button', { name: 'Save', exact: true }).click()
+    await page.getByText('Saved', { exact: true }).waitFor()
+    await page.getByText(/, in 365 days\./).waitFor()
+  })
+
   await step('chat: create a room', async () => {
     await page.goto('/chat')
     await page.getByPlaceholder('New room').fill('CSP test')
