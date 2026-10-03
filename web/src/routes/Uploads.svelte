@@ -198,7 +198,17 @@
     }
   }
 
+  // The upload whose removal is awaiting confirmation. A failed one goes without asking:
+  // nothing of it is stored, so there is nothing to lose.
+  let removingUpload = $state<Item | null>(null)
+
+  function askRemove(item: Item) {
+    if (item.status === 'error') void remove(item)
+    else removingUpload = item
+  }
+
   async function remove(item: Item) {
+    removingUpload = null
     item.handle?.abort()
     // Abort only stops this browser sending. Terminating tells the server to discard the
     // partial file now, rather than leaving it on disk until the upload expires.
@@ -285,13 +295,21 @@
     }
   }
 
+  // The file whose removal is awaiting confirmation, and the link it is in.
+  let removingFile = $state<{ share: ShareSummary; file: ShareFile; last: boolean } | null>(null)
+
   async function removeFile(token: string, fileId: number) {
-    const result = await api.del<{ files_remaining: number; share_revoked: boolean }>(
-      `/api/shares/${token}/files/${fileId}`,
-    )
-    expandedFiles = expandedFiles.filter((f) => f.id !== fileId)
-    // Removing the last file revokes the share, so there is nothing left to show.
-    if (result.share_revoked) expanded = null
+    removingFile = null
+    try {
+      const result = await api.del<{ files_remaining: number; share_revoked: boolean }>(
+        `/api/shares/${token}/files/${fileId}`,
+      )
+      expandedFiles = expandedFiles.filter((f) => f.id !== fileId)
+      // Removing the last file revokes the share, so there is nothing left to show.
+      if (result.share_revoked) expanded = null
+    } catch (e) {
+      error = e instanceof ApiError ? e.message : 'could not remove that file'
+    }
     await loadShares()
   }
 </script>
@@ -381,7 +399,7 @@
               {Math.floor((item.sent / Math.max(1, item.total)) * 100)}%
             {/if}
           </span>
-          <button class="shrink-0 text-xs text-ink-500 hover:text-ink-300" onclick={() => remove(item)}>
+          <button class="shrink-0 text-xs text-ink-500 hover:text-ink-300" onclick={() => askRemove(item)}>
             Remove
           </button>
         </div>
@@ -586,7 +604,8 @@
                     <button
                       class="shrink-0 text-xs text-ink-500 hover:text-red-400"
                       title="Remove this file from the share"
-                      onclick={() => removeFile(share.token, file.id)}
+                      onclick={() =>
+                        (removingFile = { share, file, last: expandedFiles.length === 1 })}
                     >
                       Remove
                     </button>
@@ -619,5 +638,33 @@
     danger
     onConfirm={() => revoke(removing!.token)}
     onCancel={() => (removing = null)}
+  />
+{/if}
+
+{#if removingFile}
+  {@const { share, file, last } = removingFile}
+  <Confirm
+    title={last ? `Remove the last file, and the link with it?` : `Remove “${file.filename}”?`}
+    body={last
+      ? `“${file.filename}” is the only file in “${share.title || 'Untitled'}”, so removing it removes the link too: it stops working for everyone you sent it to. The file (${bytes(file.size)}) is deleted within about 15 minutes, unless one of your other links still holds it. This cannot be undone.`
+      : `It disappears from “${share.title || 'Untitled'}” for everyone with the link; the rest of the link keeps working. The file (${bytes(file.size)}) is deleted within about 15 minutes, unless one of your other links still holds it. This cannot be undone.`}
+    confirmLabel={last ? 'Remove file and link' : 'Remove file'}
+    danger
+    onConfirm={() => removeFile(share.token, file.id)}
+    onCancel={() => (removingFile = null)}
+  />
+{/if}
+
+{#if removingUpload}
+  {@const item = removingUpload}
+  <Confirm
+    title={item.status === 'uploading' ? `Stop uploading “${item.name}”?` : `Remove “${item.name}”?`}
+    body={item.status === 'uploading'
+      ? 'The upload stops and what has arrived so far is discarded. To include this file later you would have to upload it again from the start.'
+      : `It is deleted from the server now (${bytes(item.total)}) and will not be in the link you create. To include it later you would have to upload it again.`}
+    confirmLabel={item.status === 'uploading' ? 'Stop and remove' : 'Remove file'}
+    danger
+    onConfirm={() => remove(item)}
+    onCancel={() => (removingUpload = null)}
   />
 {/if}

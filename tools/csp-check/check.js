@@ -67,6 +67,18 @@ const PASS = 'correct-horse-battery'
     await page.getByText(/Create link for 1 file/).waitFor({ timeout: 15000 })
   })
 
+  await step('remove a finished upload, after confirming', async () => {
+    const item = page.locator('li', { hasText: 'photo.jpg' }).first()
+    await item.getByRole('button', { name: 'Remove', exact: true }).click()
+    const dialog = page.getByRole('alertdialog')
+    await dialog.getByRole('button', { name: 'Cancel' }).click()
+    await dialog.waitFor({ state: 'detached' })
+    await page.getByText(/Create link for 1 file/).waitFor()
+    await item.getByRole('button', { name: 'Remove', exact: true }).click()
+    await dialog.getByRole('button', { name: 'Remove file' }).click()
+    await page.getByText(/Create link for \d+ file/).waitFor({ state: 'detached' })
+  })
+
   await step('confirm dialog (fade + scale transitions)', async () => {
     await page.getByRole('button', { name: 'Invite' }).click()
     await page.getByRole('alertdialog').waitFor()
@@ -254,6 +266,20 @@ const PASS = 'correct-horse-battery'
     await page.goto(`/d/${TOKEN}`)
     await page.getByRole('link', { name: 'Privacy' }).click()
     await page.getByRole('heading', { name: 'Who can see it' }).waitFor()
+  })
+
+  await step('remove one file from a link, after confirming', async () => {
+    await page.goto('/')
+    await page.getByRole('button', { name: /Day trip/ }).click()
+    const files = page.locator('li', { hasText: 'Day trip' }).locator('ul li')
+    await files.first().waitFor()
+    await files.first().getByRole('button', { name: 'Remove', exact: true }).click()
+    const dialog = page.getByRole('alertdialog')
+    // Day trip holds one file, so this is the variant that also ends the link — cancel it.
+    await dialog.getByRole('button', { name: 'Remove file and link' }).waitFor()
+    await dialog.getByRole('button', { name: 'Cancel' }).click()
+    await dialog.waitFor({ state: 'detached' })
+    await files.first().waitFor()
   })
 
   await step('remove a whole link, after confirming', async () => {
