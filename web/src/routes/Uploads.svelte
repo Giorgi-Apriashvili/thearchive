@@ -14,6 +14,7 @@
   import { inbox } from '../lib/inbox.svelte'
   import VisibilityToggle from '../lib/VisibilityToggle.svelte'
   import ExpiryEditor from '../lib/ExpiryEditor.svelte'
+  import Confirm from '../lib/Confirm.svelte'
   import Avatar from '../lib/Avatar.svelte'
   import MemberName from '../lib/MemberName.svelte'
   import ShareCard from '../lib/ShareCard.svelte'
@@ -245,8 +246,17 @@
     setTimeout(() => (copied = false), 1500)
   }
 
+  // The link whose removal is awaiting confirmation. One click would otherwise end a link
+  // that might hold a gigabyte of someone's weekend, with no way back.
+  let removing = $state<ShareSummary | null>(null)
+
   async function revoke(token: string) {
-    await api.del(`/api/shares/${token}`)
+    removing = null
+    try {
+      await api.del(`/api/shares/${token}`)
+    } catch (e) {
+      error = e instanceof ApiError ? e.message : 'could not remove that link'
+    }
     if (expanded === token) expanded = null
     await loadShares()
   }
@@ -556,8 +566,8 @@
                 endpoint={`/api/shares/${share.token}`}
                 onChanged={(next) => (share.visibility = next)}
               />
-              <button class="text-ink-500 hover:text-red-400" onclick={() => revoke(share.token)}>
-                Revoke
+              <button class="text-ink-500 hover:text-red-400" onclick={() => (removing = share)}>
+                Remove
               </button>
             </div>
           </div>
@@ -585,7 +595,7 @@
               </ul>
               {#if expandedFiles.length === 1}
                 <p class="mt-2 text-xs text-ink-500">
-                  Removing the last file revokes the link.
+                  Removing the last file removes the link.
                 </p>
               {/if}
               <ExpiryEditor
@@ -599,4 +609,15 @@
       {/each}
     </ul>
   </section>
+{/if}
+
+{#if removing}
+  <Confirm
+    title="Remove “{removing.title || 'Untitled'}”?"
+    body={`The link stops working at once, for everyone you sent it to, and its ${removing.file_count} file${removing.file_count === 1 ? '' : 's'} (${bytes(removing.total_bytes)}) are deleted within about 15 minutes — unless one of your other links still holds them. This cannot be undone.`}
+    confirmLabel="Remove link"
+    danger
+    onConfirm={() => revoke(removing!.token)}
+    onCancel={() => (removing = null)}
+  />
 {/if}

@@ -256,6 +256,16 @@ const PASS = 'correct-horse-battery'
     await page.getByRole('heading', { name: 'Who can see it' }).waitFor()
   })
 
+  await step('remove a whole link, after confirming', async () => {
+    await page.goto('/')
+    const row = page.locator('li', { hasText: 'Day trip' }).filter({ has: page.getByRole('button', { name: 'Remove', exact: true }) }).first()
+    await row.getByRole('button', { name: 'Remove', exact: true }).first().click()
+    const dialog = page.getByRole('alertdialog')
+    await dialog.getByText(/cannot be undone/).waitFor()
+    await dialog.getByRole('button', { name: 'Remove link' }).click()
+    await page.getByRole('button', { name: /Day trip/ }).waitFor({ state: 'detached' })
+  })
+
   // The control. An inline style attribute set through the DOM is exactly what the
   // policy forbids; if this is not reported, nothing above means anything.
   await step(
