@@ -212,6 +212,27 @@ age -d -i offsite-backup.key -o archive-YYYYmmdd-HHMMSS.db archive-YYYYmmdd-HHMM
 deploy/restore.sh /path/to/archive-YYYYmmdd-HHMMSS.db     # on the server
 ```
 
+### Monitoring (optional)
+
+Two outside services, both free at this size, so that a failure reaches you rather than
+waiting for someone to notice. Nothing on the server can report the server being down, so
+both live elsewhere, and neither sees anything about members.
+
+**Is the site up?** An [UptimeRobot](https://uptimerobot.com) HTTP(S) monitor on
+`https://<your domain>/healthz`, every 5 minutes, alerting after two failures in a row so a
+deploy's few seconds of restart do not count. `/healthz` runs a database query, so a 200
+means Caddy, the certificate, the app and the database all answered.
+
+**Are the backups happening?** A [Healthchecks.io](https://healthchecks.io) check with a
+period of 1 day and a grace time of 3 hours (the timer starts within an hour of
+midnight). Put its ping URL in `.env` as `ARCHIVE_HEALTHCHECK_URL`. `backup.sh` then
+reports each run: a failure — the backup itself, the off-site copy, or the data disk past
+`ARCHIVE_DISK_WARN_PERCENT` (90) — alerts at once with a one-line reason, and a run that
+never happens alerts when the grace time runs out. Off-site and disk problems are reported
+without failing the script, so they never block an update.
+
+Use each service's "send test notification" once to make sure alerts actually arrive.
+
 ### Restoring a backup
 
 ```bash

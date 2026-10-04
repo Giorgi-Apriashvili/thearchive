@@ -422,6 +422,19 @@ Two host-level details are worth planning around rather than discovering:
   traverses the input hook, so the firewall will not protect it — container exposure is
   decided by the bind address in compose.
 
+### Monitoring
+
+A check on the server cannot report the server being gone, so both checks live outside
+it. UptimeRobot fetches `/healthz` every five minutes — and `/healthz` queries the
+database, so a 200 means Caddy, the certificate, the app and the database all answered.
+Healthchecks.io is a dead-man's switch: `backup.sh` reports each run, failures alert at
+once with a one-line reason, and a run that never happens alerts by its silence. That
+second kind catches what no request ever would: a disabled timer, lost lingering, a dead
+Storage Box key, a filling disk. It also closes a gap the off-site copies opened — that
+step deliberately never fails `backup.sh`, so before this its errors reached only the
+journal. Neither service sees member data: one gets `/healthz`, the other the backup's
+name, the off-site result and disk use.
+
 ## HTTP surface
 
 | | | |
