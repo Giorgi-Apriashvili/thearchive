@@ -1,0 +1,11 @@
+{
+  "name": "favicon",
+  "private": true,
+  "description": "Regenerates the site icons in web/public from the wordmark's typeface",
+  "scripts": {
+    "build": "node make.js"
+  },
+  "devDependencies": {
+    "opentype.js": "^1.3.4"
+  }
+}
