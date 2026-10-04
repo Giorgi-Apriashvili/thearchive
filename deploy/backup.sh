@@ -55,6 +55,12 @@ echo "backed up to $OUT"
 # keep a backup up to a day longer than the period stated.
 find "$BACKUP_DIR" -maxdepth 1 -type f -name 'archive-*.db' -mmin "+$((DAYS * 1440))" \
     -print -delete | sed 's/^/pruned /'
+# Databases restore.sh set aside are backups too, as far as the notice is concerned.
+ASIDE_DIR="$(dirname "$BACKUP_DIR")/restore-aside"
+if [ -d "$ASIDE_DIR" ]; then
+    find "$ASIDE_DIR" -mindepth 1 -maxdepth 1 -type d -mmin "+$((DAYS * 1440))" \
+        -print -exec rm -rf {} + | sed 's/^/pruned /'
+fi
 
 # Off-site copies, when configured. A failure there is reported but does not fail this
 # script: the local backup above is what the update command waits on, and an unreachable

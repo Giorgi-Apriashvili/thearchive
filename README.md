@@ -204,13 +204,27 @@ up. Needs `age` and `rsync` on the host. Set up once, for a Hetzner Storage Box:
    mentions the off-site copies.
 
 To restore from an off-site copy: download the newest `archive-*.db.age` from the box,
-then, where the private key is,
+decrypt it where the private key is, copy the result to the server and restore it as
+below:
 
 ```bash
-age -d -i offsite-backup.key -o archive.db archive-YYYYmmdd-HHMMSS.db.age
-sqlite3 archive.db 'PRAGMA integrity_check;'    # must print ok
+age -d -i offsite-backup.key -o archive-YYYYmmdd-HHMMSS.db archive-YYYYmmdd-HHMMSS.db.age
+deploy/restore.sh /path/to/archive-YYYYmmdd-HHMMSS.db     # on the server
 ```
 
-and put `archive.db` in place as `$ARCHIVE_DATA_DIR/db/archive.db` with the app stopped,
-deleting any `archive.db-wal` and `archive.db-shm` beside it — they belong to the database
-being replaced and would be applied on top of the restored one.
+### Restoring a backup
+
+```bash
+deploy/restore.sh                          # lists backups, newest first; changes nothing
+deploy/restore.sh archive-YYYYmmdd-HHMMSS.db
+```
+
+It checks the backup's integrity before stopping anything, shows what will be replaced and
+asks for `yes`, then stops the app, swaps the database and starts it again — a few seconds
+of downtime. Everything since that backup was taken is lost. Nothing is deleted: the
+replaced database is moved to `restore-aside/` beside the backups (pruned on the same
+schedule), and the script prints the commands that undo the restore.
+
+If you are undoing a bad update, roll the code back first (`git checkout <commit>`, then
+rebuild): migrations run at startup, so the new code would upgrade the restored database
+again. The script warns when a backup predates the current schema.
