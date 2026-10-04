@@ -168,3 +168,47 @@ deployment.
 The app container publishes no ports of its own. A published container port is DNAT'd in
 prerouting and never traverses the host firewall's input hook, so exposing it directly
 would bypass the firewall — only Caddy is reachable.
+
+### Off-site backups (optional)
+
+The daily backups sit on the same disk as the database. To keep a copy elsewhere, set
+`ARCHIVE_OFFSITE_TARGET` and `ARCHIVE_OFFSITE_RECIPIENT` in `.env`; `backup.sh` then runs
+`deploy/offsite.sh` after each backup. It encrypts every backup with
+[age](https://age-encryption.org) and mirrors them with `rsync --delete`, so the copies
+are pruned on the same schedule as the local ones. A failure there is logged as
+`OFFSITE COPY FAILED` and does not fail the backup or block an update; the next run catches
+up. Needs `age` and `rsync` on the host. Set up once, for a Hetzner Storage Box:
+
+1. In the Hetzner console, create a **sub-account** for the box with its own base directory
+   and SSH enabled. The server's key then reaches only that directory. Leave the box's
+   automatic snapshots off, or keep them no longer than `ARCHIVE_BACKUP_DAYS`: they would
+   otherwise keep backups past the period the privacy notice states.
+2. On a machine **other than the server**, make the encryption key, and keep the private
+   half safe (a password manager) — without it the copies cannot be opened:
+   ```bash
+   age-keygen -o offsite-backup.key     # prints the public key, age1…
+   ```
+3. On the server, give the sub-account a key of its own:
+   ```bash
+   ssh-keygen -t ed25519 -N '' -f ~/.ssh/thearchive-offsite
+   cat ~/.ssh/thearchive-offsite.pub | ssh -p 23 <sub>@<sub>.your-storagebox.de install-ssh-key
+   ```
+4. In `.env`:
+   ```
+   ARCHIVE_OFFSITE_TARGET=<sub>@<sub>.your-storagebox.de:backups
+   ARCHIVE_OFFSITE_RECIPIENT=age1…
+   ```
+   then run `deploy/backup.sh` once to check it, and redeploy so the privacy notice
+   mentions the off-site copies.
+
+To restore from an off-site copy: download the newest `archive-*.db.age` from the box,
+then, where the private key is,
+
+```bash
+age -d -i offsite-backup.key -o archive.db archive-YYYYmmdd-HHMMSS.db.age
+sqlite3 archive.db 'PRAGMA integrity_check;'    # must print ok
+```
+
+and put `archive.db` in place as `$ARCHIVE_DATA_DIR/db/archive.db` with the app stopped,
+deleting any `archive.db-wal` and `archive.db-shm` beside it — they belong to the database
+being replaced and would be applied on top of the restored one.

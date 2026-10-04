@@ -31,7 +31,7 @@ hdr() { local k; k=$(printf '%s' "$1" | tr 'A-Z' 'a-z'); tr -d '\r' \
 
 # Secure cookies are discarded by clients over plain http, so login would never persist.
 ARCHIVE_SECURE_COOKIES=0 ARCHIVE_DATA_DIR="$DATA" ARCHIVE_PORT=$PORT \
-ARCHIVE_OPERATOR_NAME="Jane Doe" ARCHIVE_OPERATOR_CONTACT=jane@example.test \
+ARCHIVE_OPERATOR_NAME="Jane Doe" ARCHIVE_OPERATOR_CONTACT=jane@example.test ARCHIVE_OFFSITE_BACKUPS=1 \
 ARCHIVE_HOSTING_LOCATION="the European Union" \
     "$BIN" >"$WORK/server.log" 2>&1 &
 PID=$!
@@ -372,6 +372,7 @@ check "sweep interval from the setting in force" "$(priv "d['retention']['sweep_
 check "unshared uploads: the later of expiry and grace, plus a sweep" \
     "$(priv "d['retention']['unshared_upload_hours']")" "25"
 check "backup retention defaults to what backup.sh applies" "$(priv "d['retention']['backup_days']")" "14"
+check "off-site copies are stated when configured" "$(priv "d['retention']['backup_offsite']")" "True"
 # The session cookie really is the only cookie the notice can claim.
 COOKIES=$(curl -s -D - -o /dev/null -X POST "$BASE/api/auth/login" -H 'Content-Type: application/json' \
     -d '{"username":"alice","password":"correct-horse-battery"}' | tr -d '\r' | grep -ci '^set-cookie:')

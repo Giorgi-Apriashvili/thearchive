@@ -871,6 +871,15 @@ three things that made it untrue until they were fixed:
   leave old backups in place through any quiet stretch. A backup is the database only —
   files expire with their links, and copying them would keep what the notice says is
   deleted.
+  Each backup can also be copied off the machine (`deploy/offsite.sh`), since the
+  backups otherwise share a disk with the database. The copies are encrypted with age to a
+  public key whose private half is kept off the server, and mirrored with `rsync --delete`,
+  so the remote always holds exactly the local set: the retention the notice states holds
+  off-site without a second pruning rule, and a missed run heals on the next. The cost of
+  mirroring is that whoever controls the server can delete the copies too; they guard
+  against losing the machine, not against someone who has taken it. The app is told only
+  *that* copies leave the machine (`ARCHIVE_OFFSITE_BACKUPS`, derived by compose from the
+  target), never where, and the notice says so only when it is true.
 - **Log retention was an accident.** Docker kept container logs without limit, and since
   the guessing limit the app's log holds addresses and attempted usernames. Compose now
   rotates both services' logs at three files of 10 MB.

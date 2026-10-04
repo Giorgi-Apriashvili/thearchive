@@ -34,6 +34,8 @@ services:
       ARCHIVE_HOSTING_LOCATION: ${ARCHIVE_HOSTING_LOCATION:-}
       # Read here only so the notice can state it; deploy/backup.sh applies it.
       ARCHIVE_BACKUP_DAYS: ${ARCHIVE_BACKUP_DAYS:-14}
+      # Only whether off-site copies are made, for the notice; not where they go.
+      ARCHIVE_OFFSITE_BACKUPS: ${ARCHIVE_OFFSITE_TARGET:+1}
 
     volumes:
       - ${ARCHIVE_DATA_DIR}:/data

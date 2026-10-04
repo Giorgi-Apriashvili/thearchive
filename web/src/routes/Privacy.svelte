@@ -214,6 +214,11 @@
             are made every day and before every update, and each is deleted after
             {days(r.backup_days)}. So something deleted from the site can survive in a backup for
             up to {days(r.backup_days)}.
+            {#if r.backup_offsite}
+              An encrypted copy of each backup is also kept on separate storage, so that a
+              failed server does not take the backups with it, and is deleted on the same
+              schedule.
+            {/if}
           </li>
           <li>
             <strong>Logs</strong> are rotated, oldest first, once they reach a fixed size, and are

@@ -243,6 +243,8 @@ export interface PrivacyInfo {
     sweep_minutes: number
     unshared_upload_hours: number
     backup_days: number
+    /** Whether each backup is also kept, encrypted, off the server. */
+    backup_offsite: boolean
   }
 }
 

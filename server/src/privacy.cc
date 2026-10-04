@@ -76,6 +76,9 @@ void registerPrivacyRoutes() {
                 retention["unshared_upload_hours"] =
                     static_cast<Json::Int64>((unshared + 3599) / 3600);
                 retention["backup_days"] = backupDays();
+                // Set by compose from ARCHIVE_OFFSITE_TARGET: the app learns that copies
+                // leave the machine, never where to.
+                retention["backup_offsite"] = !env("ARCHIVE_OFFSITE_BACKUPS").empty();
 
                 return drogon::HttpResponse::newHttpJsonResponse(out);
             }));

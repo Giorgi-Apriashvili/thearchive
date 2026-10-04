@@ -15,8 +15,9 @@
 # most a day late.
 #
 # A backup is the SQLite database only: accounts, shares, chat. Uploaded files are not
-# copied. They expire with their links, and copying them would keep files the notice
-# says are deleted.
+# copied: they expire with their links, and copying them would keep files the notice
+# says are deleted. With ARCHIVE_OFFSITE_TARGET set, each backup is also copied off this
+# machine, encrypted, by offsite.sh.
 #
 # Needs sqlite3 on the host. The backup API gives a consistent copy while the app runs.
 set -euo pipefail
@@ -54,3 +55,12 @@ echo "backed up to $OUT"
 # keep a backup up to a day longer than the period stated.
 find "$BACKUP_DIR" -maxdepth 1 -type f -name 'archive-*.db' -mmin "+$((DAYS * 1440))" \
     -print -delete | sed 's/^/pruned /'
+
+# Off-site copies, when configured. A failure there is reported but does not fail this
+# script: the local backup above is what the update command waits on, and an unreachable
+# storage box should not block a deploy. The next run sends whatever this one missed.
+if [ -n "$(setting ARCHIVE_OFFSITE_TARGET)" ]; then
+    if ! "$HERE/offsite.sh"; then
+        echo "OFFSITE COPY FAILED: the local backup is fine, but it was not copied off this machine" >&2
+    fi
+fi
