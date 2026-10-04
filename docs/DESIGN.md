@@ -879,7 +879,10 @@ three things that made it untrue until they were fixed:
   mirroring is that whoever controls the server can delete the copies too; they guard
   against losing the machine, not against someone who has taken it. The app is told only
   *that* copies leave the machine (`ARCHIVE_OFFSITE_BACKUPS`, derived by compose from the
-  target), never where, and the notice says so only when it is true.
+  target), never where, and the notice says so only when it is true. Snapshots the target
+  takes of its own keep copies past their deletion, beyond anything `rsync --delete` can
+  reach; `ARCHIVE_OFFSITE_RETAIN_DAYS` declares how long, and the notice adds it to the
+  longest period it states, rounded up to whole months.
 - **Log retention was an accident.** Docker kept container logs without limit, and since
   the guessing limit the app's log holds addresses and attempted usernames. Compose now
   rotates both services' logs at three files of 10 MB.

@@ -36,6 +36,7 @@ services:
       ARCHIVE_BACKUP_DAYS: ${ARCHIVE_BACKUP_DAYS:-14}
       # Only whether off-site copies are made, for the notice; not where they go.
       ARCHIVE_OFFSITE_BACKUPS: ${ARCHIVE_OFFSITE_TARGET:+1}
+      ARCHIVE_OFFSITE_RETAIN_DAYS: ${ARCHIVE_OFFSITE_RETAIN_DAYS:-0}
 
     volumes:
       - ${ARCHIVE_DATA_DIR}:/data

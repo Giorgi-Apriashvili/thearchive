@@ -523,7 +523,7 @@ echo "=== the privacy notice with no operator configured ==="
 check "operator is null rather than blank" \
     "$(curl -s "$BASE/api/privacy" | python3 -c "import sys,json;print(json.load(sys.stdin)['operator'])")" "None"
 check "nor off-site backups" \
-    "$(curl -s "$BASE/api/privacy" | python3 -c "import sys,json;print(json.load(sys.stdin)['retention']['backup_offsite'])")" "False"
+    "$(curl -s "$BASE/api/privacy" | python3 -c "import sys,json;r=json.load(sys.stdin)['retention'];print(r['backup_offsite'], r['backup_offsite_extra_days'])")" "False 0"
 check "and no location is claimed" \
     "$(curl -s "$BASE/api/privacy" | python3 -c "import sys,json;print('hosting_location' in json.load(sys.stdin))")" "False"
 # This server sweeps every 2s with a 1h grace: the notice follows the settings in force.

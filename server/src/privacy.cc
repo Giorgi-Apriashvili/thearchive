@@ -37,6 +37,18 @@ int backupDays() {
     }
 }
 
+// How much longer the off-site storage's own snapshots can keep a copy after backup.sh
+// has deleted it. Snapshots cover the whole box, not just what offsite.sh mirrors, so
+// "deleted after N days" is only true off-site if this is counted too. Zero when unset.
+int offsiteRetainDays() {
+    try {
+        const int days = std::stoi(env("ARCHIVE_OFFSITE_RETAIN_DAYS"));
+        return days > 0 ? days : 0;
+    } catch (const std::exception&) {
+        return 0;
+    }
+}
+
 }  // namespace
 
 void registerPrivacyRoutes() {
@@ -78,7 +90,9 @@ void registerPrivacyRoutes() {
                 retention["backup_days"] = backupDays();
                 // Set by compose from ARCHIVE_OFFSITE_TARGET: the app learns that copies
                 // leave the machine, never where to.
-                retention["backup_offsite"] = !env("ARCHIVE_OFFSITE_BACKUPS").empty();
+                const bool offsite = !env("ARCHIVE_OFFSITE_BACKUPS").empty();
+                retention["backup_offsite"] = offsite;
+                retention["backup_offsite_extra_days"] = offsite ? offsiteRetainDays() : 0;
 
                 return drogon::HttpResponse::newHttpJsonResponse(out);
             }));

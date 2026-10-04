@@ -17,6 +17,13 @@
   function days(n: number): string {
     return `${n} day${n === 1 ? '' : 's'}`
   }
+  // Long periods in months, rounded up so the notice never understates how long something
+  // can be kept: "32 months" reads better than "944 days" and is no less true.
+  function period(n: number): string {
+    if (n < 60) return days(n)
+    const months = Math.ceil(n / 30.44)
+    return `${months} months`
+  }
   function hours(n: number): string {
     return `${n} hour${n === 1 ? '' : 's'}`
   }
@@ -212,13 +219,16 @@
             <strong>Backups</strong> of the database — accounts and profiles, links and chat, but
             not the files or pictures —
             are made every day and before every update, and each is deleted after
-            {days(r.backup_days)}. So something deleted from the site can survive in a backup for
-            up to {days(r.backup_days)}.
+            {days(r.backup_days)}.
             {#if r.backup_offsite}
-              An encrypted copy of each backup is also kept on separate storage, so that a
-              failed server does not take the backups with it, and is deleted on the same
-              schedule.
+              An encrypted copy of each is also kept on separate storage, so that a failed
+              server does not take the backups with it, and is deleted on the same schedule{#if r.backup_offsite_extra_days > 0}, but
+                that storage keeps snapshots of its own, which can hold an encrypted copy
+                for up to {period(r.backup_offsite_extra_days)} longer{/if}.
             {/if}
+            So something deleted from the site can survive in a backup for up to
+            {period(r.backup_days + (r.backup_offsite ? r.backup_offsite_extra_days : 0))}{#if r.backup_offsite && r.backup_offsite_extra_days > 0},
+              though after the first {days(r.backup_days)} only in encrypted form{/if}.
           </li>
           <li>
             <strong>Logs</strong> are rotated, oldest first, once they reach a fixed size, and are

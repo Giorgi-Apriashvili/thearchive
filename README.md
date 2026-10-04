@@ -180,9 +180,10 @@ are pruned on the same schedule as the local ones. A failure there is logged as
 up. Needs `age` and `rsync` on the host. Set up once, for a Hetzner Storage Box:
 
 1. In the Hetzner console, create a **sub-account** for the box with its own base directory
-   and SSH enabled. The server's key then reaches only that directory. Leave the box's
-   automatic snapshots off, or keep them no longer than `ARCHIVE_BACKUP_DAYS`: they would
-   otherwise keep backups past the period the privacy notice states.
+   and SSH enabled. The server's key then reaches only that directory. The box's automatic
+   snapshots cover that directory too, and keep copies after `offsite.sh` deletes them: if
+   they are on, set `ARCHIVE_OFFSITE_RETAIN_DAYS` (below) so the privacy notice states the
+   real longest period.
 2. On a machine **other than the server**, make the encryption key, and keep the private
    half safe (a password manager) — without it the copies cannot be opened:
    ```bash
@@ -197,6 +198,7 @@ up. Needs `age` and `rsync` on the host. Set up once, for a Hetzner Storage Box:
    ```
    ARCHIVE_OFFSITE_TARGET=<sub>@<sub>.your-storagebox.de:backups
    ARCHIVE_OFFSITE_RECIPIENT=age1…
+   ARCHIVE_OFFSITE_RETAIN_DAYS=930      # only with snapshots: e.g. 30 monthly × 31 days
    ```
    then run `deploy/backup.sh` once to check it, and redeploy so the privacy notice
    mentions the off-site copies.
