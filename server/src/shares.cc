@@ -452,6 +452,23 @@ std::int64_t requireOwnLiveShare(Database& db, const std::string& token, std::in
 
 namespace {
 
+// Records a counted download for the link's owner to see: who, if signed in, and what.
+// The owner's own downloads are not recorded — they would only be noise in a list
+// meant to answer "did they get it?".
+void recordDownload(Database& db, const Auth& auth, const drogon::HttpRequestPtr& req,
+                    const ShareRow& share, const std::optional<std::string>& filename) {
+    const auto viewer = auth.userForSession(req->getCookie(kSessionCookie));
+    if (viewer && viewer->id == share.ownerId) {
+        return;
+    }
+    auto stmt = db.prepare(
+        "INSERT INTO share_downloads (share_id, user_id, filename, at) VALUES (?, ?, ?, ?)");
+    stmt.bind(1, share.id);
+    viewer ? stmt.bind(2, viewer->id) : stmt.bindNull(2);
+    filename ? stmt.bind(3, *filename) : stmt.bindNull(3);
+    stmt.bind(4, nowSeconds()).run();
+}
+
 // Moves finished uploads into a share: a share_files row each, a reference on each blob,
 // and the upload row consumed. The caller's transaction makes it all or nothing; each
 // upload must be the caller's own and finished. Returns the bytes added.
@@ -754,6 +771,77 @@ void registerShareRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
         {drogon::Get, drogon::Delete, drogon::Patch});
 
     // ---- remove one file from a share -------------------------------------------
+    // ---- who downloaded your link ---------------------------------------------------
+    // The owner's view only: anyone else gets the same 404 as for a link that does not
+    // exist. Members are listed by their current name; visitors who were not signed in
+    // are one anonymous total.
+    app.registerHandler(
+        "/api/shares/{token}/downloads",
+        [&db, &auth](const drogon::HttpRequestPtr& req,
+                     std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                     const std::string& token) {
+            callback(guarded([&] {
+                const User user = requireUser(req, auth);
+                auto find = db.prepare(
+                    "SELECT id FROM shares WHERE token = ? AND owner_id = ? AND deleted_at IS NULL");
+                find.bind(1, token).bind(2, user.id);
+                if (!find.step()) {
+                    throw HttpError{404, "no such link of yours"};
+                }
+                const std::int64_t shareId = find.columnInt(0);
+
+                Json::Value people{Json::arrayValue};
+                auto stmt = db.prepare(
+                    "SELECT u.id, u.username, COALESCE(u.display_name, ''), "
+                    "       COALESCE(u.avatar, ''), u.role, COUNT(*), MAX(d.at) "
+                    "FROM share_downloads d JOIN users u ON u.id = d.user_id "
+                    "WHERE d.share_id = ? GROUP BY u.id ORDER BY MAX(d.at) DESC, MAX(d.id) DESC");
+                stmt.bind(1, shareId);
+                while (stmt.step()) {
+                    Json::Value person;
+                    person["username"] = stmt.columnText(1);
+                    if (const std::string shown = stmt.columnText(2); !shown.empty()) {
+                        person["display_name"] = shown;
+                    }
+                    if (const std::string pic = stmt.columnText(3); !pic.empty()) {
+                        person["avatar"] = avatarUrl(stmt.columnInt(0), pic);
+                    }
+                    person["role"] = stmt.columnText(4);
+                    person["downloads"] = static_cast<Json::Int64>(stmt.columnInt(5));
+                    person["last_at"] = static_cast<Json::Int64>(stmt.columnInt(6));
+                    // What they took, most recent first; null is the whole link as a zip.
+                    Json::Value files{Json::arrayValue};
+                    auto what = db.prepare(
+                        "SELECT filename FROM share_downloads WHERE share_id = ? AND user_id = ? "
+                        "GROUP BY filename ORDER BY MAX(at) DESC, MAX(id) DESC");
+                    what.bind(1, shareId).bind(2, stmt.columnInt(0));
+                    while (what.step()) {
+                        files.append(what.columnIsNull(0) ? Json::Value{}
+                                                          : Json::Value{what.columnText(0)});
+                    }
+                    person["files"] = files;
+                    people.append(person);
+                }
+
+                auto anon = db.prepare(
+                    "SELECT COUNT(*), COALESCE(MAX(at), 0) FROM share_downloads "
+                    "WHERE share_id = ? AND user_id IS NULL");
+                anon.bind(1, shareId);
+                anon.step();
+
+                Json::Value out;
+                out["people"] = people;
+                out["anonymous"]["downloads"] = static_cast<Json::Int64>(anon.columnInt(0));
+                if (anon.columnInt(0) > 0) {
+                    out["anonymous"]["last_at"] = static_cast<Json::Int64>(anon.columnInt(1));
+                }
+                auto resp = drogon::HttpResponse::newHttpJsonResponse(out);
+                resp->addHeader("Cache-Control", "no-store");
+                return resp;
+            }));
+        },
+        {drogon::Get});
+
     // ---- add files to a link you already made ----------------------------------------
     // Your own link, while it still works: finished uploads go in exactly as they do at
     // creation, so the link's address, settings and everyone it was sent to stay as they
@@ -1046,6 +1134,7 @@ void registerShareRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
                 if (db.changes() == 0) {
                     throw HttpError{410, "this link has reached its download limit"};
                 }
+                recordDownload(db, auth, req, share, std::nullopt);
 
                 auto streamer = std::make_shared<zip::Streamer>(std::move(entries));
                 const std::uint64_t total = streamer->totalSize();
@@ -1138,6 +1227,7 @@ void registerShareRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
                     if (db.changes() == 0) {
                         throw HttpError{410, "this link has reached its download limit"};
                     }
+                    recordDownload(db, auth, req, share, filename);
                 } else if (share.hasMaxDownloads &&
                            share.downloadCount >= share.maxDownloads) {
                     throw HttpError{410, "this link has reached its download limit"};

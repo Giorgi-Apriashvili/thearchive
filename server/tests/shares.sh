@@ -653,6 +653,41 @@ check "an expired link takes no more" "$(addf "$JAR" "$ADD" "{\"uploads\":[\"$A4
 check "and the upload stays yours to use" "$(sql "SELECT COUNT(*) FROM uploads WHERE id='$A4';")" "1"
 curl -s -o /dev/null -b "$JAR" -X DELETE "$BASE/files/$A4"
 
+echo "=== who downloaded a link ==="
+for n in alpha beta; do head -c 20000 /dev/urandom > "$WORK/$n.bin"; done
+WHO=$(curl -s -b "$JAR" -X POST "$BASE/api/shares" -H 'Content-Type: application/json' \
+    -d "{\"uploads\":[\"$(upload "$WORK/alpha.bin")\",\"$(upload "$WORK/beta.bin")\"],\"public\":true}" | jget token)
+WF0=$(curl -s "$BASE/api/shares/$WHO" | jfile 0); WF1=$(curl -s "$BASE/api/shares/$WHO" | jfile 1)
+INVD=$(curl -s -b "$JAR" -X POST "$BASE/api/invites" | jget code)
+DL=$(mktemp)
+curl -s -o /dev/null -c "$DL" -X POST "$BASE/api/auth/register" -H 'Content-Type: application/json' \
+    -d "{\"invite\":\"$INVD\",\"username\":\"downloader\",\"password\":\"correct-horse-battery\"}"
+who() { curl -s -b "$JAR" "$BASE/api/shares/$WHO/downloads" | python3 -c "import sys,json;d=json.load(sys.stdin);p=d['people'];a=d['anonymous'];print($1)"; }
+check "nobody yet" "$(who "len(p), a['downloads']")" "0 0"
+curl -s -o /dev/null -b "$JAR" "$BASE/d/$WHO/$WF0"
+check "the owner's own download is not listed" "$(who "len(p), a['downloads']")" "0 0"
+curl -s -o /dev/null -b "$DL" "$BASE/d/$WHO/$WF0"
+curl -s -o /dev/null -b "$DL" "$BASE/d/$WHO/$WF0"
+curl -s -o /dev/null -b "$DL" "$BASE/d/$WHO/all.zip"
+check "a signed-in member is listed by name, with each download" \
+    "$(who "p[0]['username'], p[0]['downloads']")" "downloader 3"
+check "with what they took, latest first; null is the zip" \
+    "$(who "p[0]['files']")" "[None, 'alpha.bin']"
+curl -s -o /dev/null -b "$DL" -H 'Range: bytes=100-' "$BASE/d/$WHO/$WF1"
+check "a ranged request past byte zero is not a download" "$(who "p[0]['downloads']")" "3"
+curl -s -o /dev/null "$BASE/d/$WHO/$WF1"
+curl -s -o /dev/null "$BASE/d/$WHO/all.zip"
+check "visitors who are not signed in are only counted" "$(who "len(p), a['downloads'], 'last_at' in a")" "1 2 True"
+check "no address is kept anywhere in the record" \
+    "$(sql "SELECT COUNT(*) FROM pragma_table_info('share_downloads') WHERE name LIKE '%ip%' OR name LIKE '%addr%';")" "0"
+check "only the owner can see it" "$(curl -s -o /dev/null -w '%{http_code}' -b "$DL" "$BASE/api/shares/$WHO/downloads")" "404"
+check "and not signed out" "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/shares/$WHO/downloads")" "401"
+rm -f "$DL"
+WHO_ID=$(sql "SELECT id FROM shares WHERE token='$WHO';")
+curl -s -o /dev/null -b "$JAR" -X DELETE "$BASE/api/shares/$WHO"
+gcwait
+check "removing the link deletes who downloaded it" "$(sql "SELECT COUNT(*) FROM share_downloads WHERE share_id = $WHO_ID;")" "0"
+
 echo "=== tus termination ==="
 head -c 131072 /dev/urandom > "$WORK/cancel.bin"
 CANCEL=$(sha256sum "$WORK/cancel.bin" | cut -d' ' -f1)

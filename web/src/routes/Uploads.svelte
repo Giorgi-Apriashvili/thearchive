@@ -6,6 +6,7 @@
     ApiError,
     type CreatedShare,
     type ShareDetail,
+    type ShareDownloads,
     type ShareFile,
     type ShareSummary,
     type StorageInfo,
@@ -334,6 +335,7 @@
 
   let expanded = $state<string | null>(null)
   let expandedFiles = $state<ShareFile[]>([])
+  let expandedDownloads = $state<ShareDownloads | null>(null)
   let expanding = $state(false)
 
   async function toggle(token: string) {
@@ -343,6 +345,7 @@
     }
     expanded = token
     expandedFiles = []
+    expandedDownloads = null
     expanding = true
     try {
       await loadExpanded(token)
@@ -356,8 +359,17 @@
   async function loadExpanded(token: string) {
     // The owner is exempt from the share password, so this works even on a protected
     // link without prompting for something they chose themselves.
-    const detail = await api.get<ShareDetail>(`/api/shares/${token}`)
+    const [detail, downloads] = await Promise.all([
+      api.get<ShareDetail>(`/api/shares/${token}`),
+      api.get<ShareDownloads>(`/api/shares/${token}/downloads`),
+    ])
     expandedFiles = detail.files
+    expandedDownloads = downloads
+  }
+
+  function took(files: (string | null)[]): string {
+    const names = files.map((f) => f ?? 'everything, as a zip')
+    return names.length > 3 ? `${names.slice(0, 3).join(', ')} and ${names.length - 3} more` : names.join(', ')
   }
 
   // The file whose removal is awaiting confirmation, and the link it is in.
@@ -718,6 +730,42 @@
                 <p class="mt-2 text-xs text-ink-500">
                   Removing the last file removes the link.
                 </p>
+              {/if}
+              {#if expandedDownloads}
+                <div class="mt-4 border-t border-ink-800 pt-3 text-xs">
+                  <p class="text-ink-500">Downloaded by</p>
+                  {#if expandedDownloads.people.length === 0 && expandedDownloads.anonymous.downloads === 0}
+                    <p class="mt-1.5 text-ink-500">No one but you yet.</p>
+                  {/if}
+                  <ul class="mt-1.5 space-y-2">
+                    {#each expandedDownloads.people as person (person.username)}
+                      <li class="flex items-start gap-2">
+                        <Avatar src={person.avatar} name={person.username} size="xs" />
+                        <div class="min-w-0">
+                          <p class="flex flex-wrap items-baseline gap-x-1.5">
+                            <MemberName
+                              username={person.username}
+                              displayName={person.display_name}
+                              role={person.role}
+                            />
+                            <span class="tnum text-ink-500">
+                              · {person.downloads} download{person.downloads === 1 ? '' : 's'} · {chatTime(person.last_at)}
+                            </span>
+                          </p>
+                          <p class="truncate text-ink-500">{took(person.files)}</p>
+                        </div>
+                      </li>
+                    {/each}
+                    {#if expandedDownloads.anonymous.downloads > 0}
+                      <li class="tnum text-ink-500">
+                        {expandedDownloads.anonymous.downloads} download{expandedDownloads.anonymous.downloads === 1
+                          ? ''
+                          : 's'} by people who were not signed in{#if expandedDownloads.anonymous.last_at}{' '}·
+                          last {chatTime(expandedDownloads.anonymous.last_at)}{/if}
+                      </li>
+                    {/if}
+                  </ul>
+                </div>
               {/if}
               {#if liveShares.some((s) => s.token === share.token)}
                 <button

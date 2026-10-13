@@ -4,7 +4,7 @@
   // Every statement below was checked against the code, and every period comes from
   // /api/privacy, which reports the values the server enforces. Change what this page
   // says only together with what the system does — and move this date when you do.
-  const UPDATED = '23 September 2026'
+  const UPDATED = '13 October 2026'
 
   let info = $state<PrivacyInfo | null>(null)
   let failed = $state(false)
@@ -113,8 +113,8 @@
           </li>
           <li>
             <strong>Links you create:</strong> their title, expiry, whether they are public or
-            members-only, any download limit, how many times they have been downloaded, and a
-            password if you set one — again only as a hash.
+            members-only, any download limit, how many times they have been downloaded and by
+            which members, and a password if you set one — again only as a hash.
           </li>
           <li>
             <strong>Links you send:</strong> which of your links you sent to whom, when, with
@@ -163,6 +163,12 @@
             blocked you in chat does not receive links from you either.
           </li>
           <li>
+            <strong>Who downloaded a link:</strong> when you download from a link while signed
+            in, the member who made it can see that you did, which files, and when. Nobody else
+            can. If you are not signed in, a download is only counted, never identified — no
+            address or other detail about you is kept.
+          </li>
+          <li>
             <strong>Chat:</strong> every member can see the names of all rooms; what is said in a
             room only its members can see.
           </li>
@@ -189,8 +195,9 @@
             time; its creator can change that while it still works, and each change counts from
             that moment. They are then deleted
             within {minutes(r.sweep_minutes)}, unless the same file is still in another link that
-            has not expired. Previews go with their file. Anything uploaded but never made into a
-            link is deleted within {hours(r.unshared_upload_hours)}.
+            has not expired. Previews go with their file, and the record of who downloaded a link
+            goes with the link. Anything uploaded but never made into a link is deleted within
+            {hours(r.unshared_upload_hours)}.
           </li>
           <li>
             <strong>A link's record</strong> — its title, dates and download count, but not its

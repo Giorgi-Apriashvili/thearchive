@@ -61,6 +61,10 @@ int releaseLapsedShares(Database& db, std::int64_t now) {
 
         auto dropFiles = db.prepare("DELETE FROM share_files WHERE share_id = ?");
         dropFiles.bind(1, shareId).run();
+        // Who downloaded it goes with it; the privacy notice says nothing about a link
+        // outlives the link.
+        auto dropDownloads = db.prepare("DELETE FROM share_downloads WHERE share_id = ?");
+        dropDownloads.bind(1, shareId).run();
 
         auto mark = db.prepare("UPDATE shares SET released_at = ? WHERE id = ?");
         mark.bind(1, now).bind(2, shareId).run();

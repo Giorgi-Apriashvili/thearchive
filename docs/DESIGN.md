@@ -128,6 +128,8 @@ message_shares(message_id → messages CASCADE, position,
 share_deliveries(id, share_id → shares CASCADE, sender_id, recipient_id,
                  note, sent_at, seen_at, batch, position,
                  UNIQUE(share_id, recipient_id))            -- batch: one send
+share_downloads(id, share_id → shares CASCADE, user_id → users CASCADE,
+                filename, at)                               -- who downloaded; NULL user = not signed in
 ```
 
 A **share** holds one or more files — a whole night goes out as one link. `token` is 128
@@ -208,6 +210,14 @@ settings and recipients stay as they were. The transaction re-checks that the sw
 not released the share: files attached to a released share would hold blob references
 that nothing ever gives back. Removing works per file and is already there, so a link's
 contents can be corrected in both directions without a new address.
+
+**Who downloaded a link** is recorded for its owner: one `share_downloads` row per
+counted download (the byte-zero rule above), naming the member if they were signed in —
+on any link, public or members-only — and no one otherwise. A visitor who was not signed
+in is counted, never identified; no address is kept, here or anywhere. The owner's own
+downloads are not recorded, being noise in a list that answers "did they get it?". Only
+the owner can read it (`GET /api/shares/{token}/downloads`), the privacy notice says so,
+and the rows go when the sweep releases the link: nothing about a link outlives it.
 
 Expiry is 1–365 days, defaulting to 30. The owner can change it while the link still
 works (`PATCH /api/shares/{token}` with `expires_days`), counted from that moment as at
@@ -492,6 +502,7 @@ name, the off-site result and disk use.
 | `GET` | `/api/shares` | list your own |
 | `DELETE` | `/api/shares/{token}` | revoke early |
 | `PATCH` | `/api/shares/{token}` | `{visibility?, expires_days?}` — your own; expiry only while it works |
+| `GET` | `/api/shares/{token}/downloads` | who downloaded your link — members by name, others only counted; owner only |
 | `POST` | `/api/shares/{token}/files` | `{uploads: [id…]}` — add finished uploads to your own working link |
 | `DELETE` | `/api/shares/{token}/files/{id}` | remove one file; revokes the share if it was the last |
 | `GET` | `/api/storage` | usage and free space |

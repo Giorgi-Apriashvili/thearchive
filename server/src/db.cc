@@ -340,7 +340,24 @@ UPDATE share_deliveries SET batch = 'solo-' || id WHERE batch IS NULL;
 CREATE INDEX idx_deliveries_batch ON share_deliveries(recipient_id, batch);
 )SQL";
 
-constexpr std::array<Migration, 15> kMigrations{{
+// Who downloaded a link, for its owner. One row per counted download (the same
+// byte-zero rule as shares.download_count), with the member who made it — or no one, for
+// a visitor who was not signed in, who is counted and never identified; no address is
+// kept. `filename` is a snapshot, since a file can be removed from the link afterwards;
+// NULL means the whole link as a zip. The rows go when the link is released, with its
+// files: nothing about a link outlives it.
+constexpr const char* kSchemaV16 = R"SQL(
+CREATE TABLE share_downloads (
+    id        INTEGER PRIMARY KEY,
+    share_id  INTEGER NOT NULL REFERENCES shares(id) ON DELETE CASCADE,
+    user_id   INTEGER          REFERENCES users(id) ON DELETE CASCADE,
+    filename  TEXT,
+    at        INTEGER NOT NULL
+);
+CREATE INDEX idx_share_downloads_share ON share_downloads(share_id, user_id);
+)SQL";
+
+constexpr std::array<Migration, 16> kMigrations{{
     {1, kSchemaV1},
     {2, kSchemaV2},
     {3, kSchemaV3},
@@ -356,6 +373,7 @@ constexpr std::array<Migration, 15> kMigrations{{
     {13, kSchemaV13},
     {14, kSchemaV14},
     {15, kSchemaV15},
+    {16, kSchemaV16},
 }};
 
 }  // namespace

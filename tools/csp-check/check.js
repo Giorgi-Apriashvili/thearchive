@@ -392,6 +392,29 @@ const PASS = 'correct-horse-battery'
     await page.getByRole('alertdialog').getByRole('button', { name: 'Remove file' }).click()
   })
 
+  await step('who downloaded a link', async () => {
+    const detail = await (await page.request.get(`/api/shares/${TOKEN}`)).json()
+    const file = detail.files[0].id
+    const bob = await request.newContext({ baseURL: BASE })
+    const stranger = await request.newContext({ baseURL: BASE })
+    try {
+      await bob.post('/api/auth/login', { data: { username: 'bob', password: PASS } })
+      await bob.get(`/d/${TOKEN}/${file}`)
+      await stranger.get(`/d/${TOKEN}/${file}`)
+    } finally {
+      await bob.dispose()
+      await stranger.dispose()
+    }
+    await page.goto('/')
+    await page.getByRole('button', { name: /Night out/ }).first().click()
+    const panel = page.locator('li', { hasText: 'Downloaded by' }).first()
+    await panel.getByText('bob', { exact: true }).waitFor()
+    const text = (await panel.innerText()).replace(/\s+/g, ' ')
+    for (const want of [/bob · 1 download · /, /1 download by people who were not signed in · last /]) {
+      if (!want.test(text)) throw new Error(`expected ${want} in: ${text}`)
+    }
+  })
+
   await step('leaving mid-upload asks first; afterwards it does not', async () => {
     await page.goto('/')
     // Hold the upload mid-transfer: its PATCH requests wait until released.

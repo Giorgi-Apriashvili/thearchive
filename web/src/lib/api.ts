@@ -215,6 +215,21 @@ export interface ShareCard {
 }
 
 /** A link a member sent you. */
+/** Who downloaded one of your links, as its owner sees it. `files` holds what each
+ *  member took, latest first; null stands for the whole link as a zip. */
+export interface ShareDownloads {
+  people: {
+    username: string
+    display_name?: string
+    avatar?: string
+    role: string
+    downloads: number
+    last_at: number
+    files: (string | null)[]
+  }[]
+  anonymous: { downloads: number; last_at?: number }
+}
+
 /** Something waiting for you, as GET /api/notifications reports it. `key` is stable per
  *  item, so successive polls (and several tabs) can tell what is new. */
 export interface NotificationItem {
