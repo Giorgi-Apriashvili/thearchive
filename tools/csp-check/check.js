@@ -284,6 +284,13 @@ const PASS = 'correct-horse-battery'
     await page.getByText('message 205', { exact: true }).waitFor()
     await page.getByRole('button', { name: 'Load earlier messages' }).click()
     await page.getByText('message 1', { exact: true }).waitFor()
+    // Reading back must not be interrupted: wait out a room-list refresh (every 10s),
+    // which once handed the room a fresh object and dragged the view to the bottom.
+    const scroller = page.locator('.overflow-y-auto', { hasText: 'message 1' }).last()
+    const before = await scroller.evaluate((e) => e.scrollTop)
+    await page.waitForTimeout(11000)
+    const after = await scroller.evaluate((e) => e.scrollTop)
+    if (Math.abs(after - before) > 50) throw new Error(`scrolled from ${before} to ${after} on its own`)
     // Scrolled back now: the way down shows, and takes you there.
     await page.getByRole('button', { name: /^↓/ }).click()
     await page.getByRole('button', { name: /^↓/ }).waitFor({ state: 'detached' })

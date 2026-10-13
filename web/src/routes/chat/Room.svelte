@@ -408,11 +408,10 @@
     if (pinned && scroller) scroller.scrollTop = scroller.scrollHeight
   })
 
-  // A fresh room starts at the bottom regardless of where the last one was left.
-  $effect(() => {
-    room.id
-    pinned = true
-  })
+  // A fresh room starts at the bottom because Chat.svelte keys this component on the
+  // room's id — each room gets a new instance, with `pinned` starting true. There was an
+  // effect here re-pinning on `room.id`, but `room` is a new object every time the room list
+  // refreshes, so it fired every few seconds and dragged anyone reading back to the bottom.
 
   async function send(event: SubmitEvent) {
     event.preventDefault()
