@@ -199,6 +199,14 @@ check "and it is the newest 200" \
     "$(as "$ALICE" GET "/api/chat/rooms/$BULK/messages" | bodies | tail -1)" "line 250"
 check "still oldest-first within the page" \
     "$(as "$ALICE" GET "/api/chat/rooms/$BULK/messages" | bodies | head -1)" "line 51"
+# Scrolling back reaches all of it: pages of 100 before the oldest id held.
+OLDEST=$(as "$ALICE" GET "/api/chat/rooms/$BULK/messages" | py "import sys,json;print(json.load(sys.stdin)['messages'][0]['id'])")
+check "there is more before the newest 200" \
+    "$(as "$ALICE" GET "/api/chat/rooms/$BULK/messages" | jf has_older)" "True"
+check "the page before it" \
+    "$(as "$ALICE" GET "/api/chat/rooms/$BULK/messages?before=$OLDEST" | bodies | sed -n '1p;$p' | tr '\n' '|')" "line 1|line 50|"
+check "is the beginning" \
+    "$(as "$ALICE" GET "/api/chat/rooms/$BULK/messages?before=$OLDEST" | jf has_older)" "False"
 
 echo
 echo "=== unread counts ==="
@@ -220,7 +228,9 @@ check "member count is visible" \
 
 echo
 echo "=== admin removal leaves a tombstone ==="
-check "a member cannot remove a message" "$(code "$BOB" DELETE "/api/chat/messages/$M3")" "403"
+# Bob wrote M3. Someone else's message is not his to remove; his own is (tested later).
+MA=$(sql "SELECT id FROM messages WHERE room_id=$ROOM AND user_id=(SELECT id FROM users WHERE username='alice') ORDER BY id LIMIT 1;")
+check "a member cannot remove someone else's message" "$(code "$BOB" DELETE "/api/chat/messages/$MA")" "403"
 check "an admin can" "$(code "$ALICE" DELETE "/api/chat/messages/$M3")" "200"
 check "removing it twice finds nothing to remove" \
     "$(code "$ALICE" DELETE "/api/chat/messages/$M3")" "404"
@@ -343,6 +353,72 @@ check "reading the room clears them" "$(nf "$BOB" "c['mentions'], len(items)")" 
 check "carol, invited but not in, is not notified of mentions" "$(nf "$CAROL" "c['mentions']")" "0"
 as "$CAROL" POST "/api/chat/rooms/$NOTE/respond" '{"action":"block_room"}' >/dev/null
 check "blocking the room withdraws its invitation" "$(nf "$CAROL" "c['invitations'], len(items)")" "0 0"
+
+echo
+echo "=== editing and removing your own ==="
+FUN=$(as "$ALICE" POST /api/chat/rooms '{"name":"Fundamentals"}' | jf id)
+as "$ALICE" POST "/api/chat/rooms/$FUN/invite" '{"username":"bob"}' >/dev/null
+as "$BOB" POST "/api/chat/rooms/$FUN/respond" '{"action":"accept"}' >/dev/null
+E1=$(as "$BOB" POST "/api/chat/rooms/$FUN/messages" '{"body":"see you at 8"}' | jf id)
+T0=$(as "$ALICE" GET "/api/chat/rooms/$FUN/messages" | jf now)
+check "an author edits their message" "$(code "$BOB" PATCH "/api/chat/messages/$E1" '{"body":"see you at 9, @alice"}')" "200"
+check "the new text is served, marked edited" \
+    "$(as "$ALICE" GET "/api/chat/rooms/$FUN/messages" | py "import sys,json;m=[x for x in json.load(sys.stdin)['messages'] if x['id']==$E1][0];print(m['body'], 'edited_at' in m)")" "see you at 9, @alice True"
+check "a mention added by the edit counts" "$(sql "SELECT mentioned_name FROM message_mentions WHERE message_id=$E1;")" "alice"
+check "a poll that already has it learns of the edit" \
+    "$(as "$ALICE" GET "/api/chat/rooms/$FUN/messages?since=$E1&changed=$T0" | py "import sys,json;d=json.load(sys.stdin);print(len(d['messages']), [m['body'] for m in d['changed']])")" "0 ['see you at 9, @alice']"
+check "nobody else can edit it" "$(code "$ALICE" PATCH "/api/chat/messages/$E1" '{"body":"hijacked"}')" "403"
+check "nor empty it" "$(code "$BOB" PATCH "/api/chat/messages/$E1" '{"body":"   "}')" "400"
+check "an author removes their own message" "$(code "$BOB" DELETE "/api/chat/messages/$E1")" "200"
+check "leaving a tombstone in their name" \
+    "$(as "$ALICE" GET "/api/chat/rooms/$FUN/messages" | bodies | tail -1)" "[removed by bob]"
+check "and its text erased" "$(sql "SELECT length(body) FROM messages WHERE id=$E1;")" "0"
+check "which other clients learn of too" \
+    "$(as "$ALICE" GET "/api/chat/rooms/$FUN/messages?since=$E1&changed=$T0" | py "import sys,json;print([m.get('deleted') for m in json.load(sys.stdin)['changed']])")" "[True]"
+check "a removed message cannot be edited" "$(code "$BOB" PATCH "/api/chat/messages/$E1" '{"body":"back"}')" "404"
+check "the author's own removal is not an admin action" \
+    "$(sql "SELECT COUNT(*) FROM activity WHERE event='admin.message_removed' AND detail LIKE '%Fundamentals%';")" "0"
+
+echo
+echo "=== running a room ==="
+check "a member cannot rename it" "$(code "$BOB" PATCH "/api/chat/rooms/$FUN" '{"name":"Mine now"}')" "403"
+check "its creator can, and set a topic" "$(code "$ALICE" PATCH "/api/chat/rooms/$FUN" '{"name":"Trip planning","topic":"Saturday, 8am at the station"}')" "200"
+check "everyone sees both" "$(as "$BOB" GET /api/chat/rooms | room 'Trip planning' | py "import sys,json;r=json.load(sys.stdin);print(r['topic'], r['can_manage'])")" "Saturday, 8am at the station False"
+check "the creator is told they can manage it" "$(as "$ALICE" GET /api/chat/rooms | room 'Trip planning' | rf can_manage)" "True"
+check "a topic with direction tricks is refused" "$(code "$ALICE" PATCH "/api/chat/rooms/$FUN" '{"topic":"a\u202Eb"}')" "400"
+check "an empty topic clears it" "$(code "$ALICE" PATCH "/api/chat/rooms/$FUN" '{"topic":""}'),$(as "$BOB" GET /api/chat/rooms | room 'Trip planning' | rf topic)" "200,-"
+as "$ALICE" POST "/api/chat/rooms/$FUN/invite" '{"username":"carol"}' >/dev/null
+check "a member cannot remove anyone" "$(code "$BOB" POST "/api/chat/rooms/$FUN/members/carol/remove")" "403"
+check "the creator withdraws carol's invitation" "$(code "$ALICE" POST "/api/chat/rooms/$FUN/members/carol/remove")" "200"
+check "so there is nothing for her to accept" "$(code "$CAROL" POST "/api/chat/rooms/$FUN/respond" '{"action":"accept"}')" "404"
+check "the creator cannot be removed" "$(code "$ALICE" POST "/api/chat/rooms/$FUN/members/alice/remove")" "409"
+check "and removes bob" "$(code "$ALICE" POST "/api/chat/rooms/$FUN/members/bob/remove")" "200"
+check "who can no longer read it" "$(code "$BOB" GET "/api/chat/rooms/$FUN/messages")" "404"
+check "until invited back" \
+    "$(as "$ALICE" POST "/api/chat/rooms/$FUN/invite" '{"username":"bob"}' >/dev/null; as "$BOB" GET /api/chat/rooms | room 'Trip planning' | rf state)" "invited"
+as "$BOB" POST "/api/chat/rooms/$FUN/respond" '{"action":"accept"}' >/dev/null
+
+echo
+echo "=== leaving ==="
+check "a member leaves" "$(code "$BOB" POST "/api/chat/rooms/$FUN/leave"),$(as "$BOB" GET /api/chat/rooms | room 'Trip planning' | rf state)" "200,left"
+check "and can no longer read it" "$(code "$BOB" GET "/api/chat/rooms/$FUN/messages")" "404"
+check "or post" "$(code "$BOB" POST "/api/chat/rooms/$FUN/messages" '{"body":"hello?"}')" "404"
+check "nor leave twice" "$(code "$BOB" POST "/api/chat/rooms/$FUN/leave")" "404"
+check "the count drops" "$(as "$ALICE" GET /api/chat/rooms | room 'Trip planning' | rf member_count)" "1"
+check "a new invitation brings them back" \
+    "$(as "$ALICE" POST "/api/chat/rooms/$FUN/invite" '{"username":"bob"}' >/dev/null; as "$BOB" POST "/api/chat/rooms/$FUN/respond" '{"action":"accept"}' >/dev/null; code "$BOB" GET "/api/chat/rooms/$FUN/messages")" "200"
+DAVEROOM=$(as "$DAVE" POST /api/chat/rooms '{"name":"Dave den"}' | jf id)
+as "$DAVE" POST "/api/chat/rooms/$DAVEROOM/leave" >/dev/null
+check "a creator who has left can no longer run the room" \
+    "$(code "$DAVE" PATCH "/api/chat/rooms/$DAVEROOM" '{"topic":"still mine?"}')" "403"
+
+echo
+echo "=== deleting a room ==="
+check "a member cannot" "$(code "$BOB" DELETE "/api/chat/rooms/$FUN")" "403"
+check "its creator can" "$(code "$ALICE" DELETE "/api/chat/rooms/$FUN")" "200"
+check "and its messages go with it" "$(sql "SELECT COUNT(*) FROM messages WHERE room_id=$FUN;")" "0"
+check "it is recorded" "$(sql "SELECT detail FROM activity WHERE event='chat.room_deleted' ORDER BY id DESC LIMIT 1;")" "“Trip planning”"
+check "an administrator can delete anyone's" "$(code "$ALICE" DELETE "/api/chat/rooms/$DAVEROOM")" "200"
 
 echo
 echo "=== declining ==="

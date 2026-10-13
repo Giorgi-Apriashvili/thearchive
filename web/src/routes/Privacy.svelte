@@ -214,15 +214,19 @@
             files — is kept after it expires, as history.
           </li>
           <li>
-            <strong>Chat is kept permanently.</strong> If an account is deleted, its messages stay
-            in their rooms under the name the person last had, so conversations remain readable.
-            Administrators can remove individual messages: a removed message is replaced by a
-            marker saying who removed it, and its text, and any links it carried, are removed.
+            <strong>Chat is kept until it is removed.</strong> If an account is deleted, its
+            messages stay in their rooms under the name the person last had, so conversations
+            remain readable. You can edit or remove your own messages; an edit replaces the
+            earlier text, which is not kept. Administrators can remove anyone's message. A removed
+            message is replaced by a marker saying who removed it, and its text, and any links it
+            carried, are removed. A room's creator or an administrator can delete a whole room,
+            which removes everything said in it. Leaving a room, or being removed from it, leaves
+            what you said there.
           </li>
           <li>
             <strong>Links sent to you</strong> stay in your list until you dismiss them, or until
-            the sender's account is deleted. Links attached to a chat message stay with it, since
-            chat is kept permanently; once a link expires the message says so instead of offering
+            the sender's account is deleted. Links attached to a chat message stay with it for as
+            long as the message does; once a link expires the message says so instead of offering
             it.
           </li>
           <li>

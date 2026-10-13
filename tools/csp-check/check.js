@@ -157,10 +157,59 @@ const PASS = 'correct-horse-battery'
 
   await step('chat: member popover (fade transition)', async () => {
     // The header's count is the toggle; the room list shows the same text as plain info.
-    await page.locator('button[aria-expanded]').click()
+    await page.getByRole('button', { name: /^\d+ members?$/ }).click()
     // Within the popover: on a wide window the members panel says "creator" as well.
     await page.getByRole('group', { name: /^Members of / }).getByText('creator').waitFor()
     await page.keyboard.press('Escape')
+  })
+
+  await step('chat: edit your own message', async () => {
+    const message = page.locator('.group', { hasText: 'see https://example.com' }).first()
+    await message.hover()
+    await message.getByRole('button', { name: 'Edit', exact: true }).click()
+    // Once editing, the text lives in the box, so the message is no longer found by it.
+    const box = page.locator('.group textarea')
+    await box.fill('see https://example.com — edited')
+    await box.press('Enter')
+    await page.getByText('(edited)').first().waitFor()
+    await page.getByText('— edited').first().waitFor()
+  })
+
+  await step('chat: room settings (topic)', async () => {
+    await page.getByRole('button', { name: 'Room options' }).click()
+    await page.getByRole('button', { name: 'Room settings' }).click()
+    const dialog = page.getByRole('dialog', { name: 'Room settings' })
+    await dialog.getByPlaceholder('What this room is for').fill('Testing the policy')
+    await dialog.getByRole('button', { name: 'Save', exact: true }).click()
+    await dialog.getByText('Saved.').waitFor()
+    await dialog.getByRole('button', { name: 'Close', exact: true }).click()
+    await page.locator('header').getByText('Testing the policy').waitFor()
+  })
+
+  await step('chat: remove your own message', async () => {
+    const message = page.locator('.group', { hasText: '— edited' }).first()
+    await message.hover()
+    await message.getByRole('button', { name: 'Remove', exact: true }).click()
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Remove' }).click()
+    await page.getByText('Removed by alice').waitFor()
+  })
+
+  await step('chat: scroll back through all of a long room', async () => {
+    const room = await (await page.request.post('/api/chat/rooms', { data: { name: 'Long room' } })).json()
+    for (let i = 1; i <= 205; i++) {
+      await page.request.post(`/api/chat/rooms/${room.id}/messages`, { data: { body: `message ${i}` } })
+    }
+    await page.goto(`/chat/${room.id}`)
+    await page.getByText('message 205', { exact: true }).waitFor()
+    await page.getByRole('button', { name: 'Load earlier messages' }).click()
+    await page.getByText('message 1', { exact: true }).waitFor()
+  })
+
+  await step('chat: leave a room', async () => {
+    await page.getByRole('button', { name: 'Room options' }).click()
+    await page.getByRole('button', { name: 'Leave room' }).click()
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Leave room' }).click()
+    await page.getByRole('button', { name: /Long room/ }).getByText('left').waitFor()
   })
 
   await step('chat: decline dialog (fade + scale transitions)', async () => {

@@ -384,7 +384,18 @@ constexpr const char* kSchemaV18 = R"SQL(
 ALTER TABLE users ADD COLUMN storage_limit INTEGER;
 )SQL";
 
-constexpr std::array<Migration, 18> kMigrations{{
+// Chat, fuller: editing and removing your own messages, and room topics. edited_at marks a
+// message as edited; updated_at is when it last changed in any way — an edit or a
+// removal — which is how a poll learns of changes to messages it already has without
+// re-reading the room. The edited text replaces the old; no earlier version is kept.
+constexpr const char* kSchemaV19 = R"SQL(
+ALTER TABLE messages ADD COLUMN edited_at INTEGER;
+ALTER TABLE messages ADD COLUMN updated_at INTEGER;
+CREATE INDEX idx_messages_updated ON messages(room_id, updated_at);
+ALTER TABLE rooms ADD COLUMN topic TEXT;
+)SQL";
+
+constexpr std::array<Migration, 19> kMigrations{{
     {1, kSchemaV1},
     {2, kSchemaV2},
     {3, kSchemaV3},
@@ -403,6 +414,7 @@ constexpr std::array<Migration, 18> kMigrations{{
     {16, kSchemaV16},
     {17, kSchemaV17},
     {18, kSchemaV18},
+    {19, kSchemaV19},
 }};
 
 }  // namespace

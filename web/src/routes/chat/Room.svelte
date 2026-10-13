@@ -11,6 +11,9 @@
   import LockIcon from '../../lib/LockIcon.svelte'
   import Confirm from '../../lib/Confirm.svelte'
   import Members from './Members.svelte'
+  import RoomSettings from './RoomSettings.svelte'
+  import { router } from '../../lib/router.svelte'
+  import { tick } from 'svelte'
 
   let { room, me }: { room: ChatRoom; me: Me } = $props()
 
@@ -74,6 +77,55 @@
   let inviteNote = $state('')
 
   let removing = $state<ChatMessage | null>(null)
+  let menuOpen = $state(false)
+  let showSettings = $state(false)
+  let confirmingLeave = $state(false)
+
+  // Editing one of your own messages, in place.
+  let editingId = $state<number | null>(null)
+  let editText = $state('')
+  let savingEdit = $state(false)
+
+  function startEdit(message: ChatMessage) {
+    editingId = message.id
+    editText = message.body ?? ''
+  }
+
+  async function saveEdit() {
+    if (editingId === null || savingEdit) return
+    savingEdit = true
+    error = ''
+    try {
+      await api.patch(`/api/chat/messages/${editingId}`, { body: editText.trim() })
+      editingId = null
+      await chat.reload()
+    } catch (e) {
+      error = e instanceof ApiError ? e.message : 'could not save the edit'
+    } finally {
+      savingEdit = false
+    }
+  }
+
+  function onEditKeydown(event: KeyboardEvent) {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      editingId = null
+    } else if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault()
+      void saveEdit()
+    }
+  }
+
+  async function leave() {
+    confirmingLeave = false
+    try {
+      await api.post(`/api/chat/rooms/${room.id}/leave`)
+      router.go('/chat')
+      await chat.loadRooms()
+    } catch (e) {
+      error = e instanceof ApiError ? e.message : 'could not leave the room'
+    }
+  }
 
   let scroller = $state<HTMLElement | null>(null)
   // Only follow new messages when the reader is already at the bottom. Yanking someone
@@ -84,6 +136,17 @@
   function onScroll() {
     if (!scroller) return
     pinned = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 60
+    // Near the top with more behind it: fetch the page before, keeping what is on screen
+    // where it is rather than letting the new rows push it down.
+    if (scroller.scrollTop < 120 && chat.hasOlder && !chat.loadingOlder) void loadOlder()
+  }
+
+  async function loadOlder() {
+    if (!scroller) return
+    const fromBottom = scroller.scrollHeight - scroller.scrollTop
+    await chat.loadOlder()
+    await tick()
+    if (scroller) scroller.scrollTop = scroller.scrollHeight - fromBottom
   }
 
   $effect(() => {
@@ -175,17 +238,17 @@
     removing = null
     try {
       await api.del(`/api/chat/messages/${message.id}`)
-      // The tombstone replaces an id the poll cursor has already passed, so this client
-      // has to re-read the room to stop showing what it just took down.
+      // The tombstone arrives as a change to a message already on screen; asking now
+      // rather than at the next tick keeps the text from lingering after the click.
       await chat.reload()
     } catch (e) {
       error = e instanceof ApiError ? e.message : 'could not remove it'
     }
   }
 
-  // The invite box is for whoever can actually use it; everyone else gets no dead
-  // control. The server enforces the same rule.
-  const canInvite = $derived(room.is_creator || me.role === 'admin')
+  // The invite box and room settings are for whoever can actually use them; everyone
+  // else gets no dead control. The server enforces the same rule.
+  const canInvite = $derived(room.can_manage)
 </script>
 
 <!-- Fixed height on phones, where the page scrolls; from md, the window's height less the
@@ -202,16 +265,48 @@
         >{room.member_count} member{room.member_count === 1 ? '' : 's'}</button>
         · started by {room.created_by}
       </p>
+      {#if room.topic}
+        <p class="mt-0.5 truncate text-xs text-ink-300" title={room.topic}>{room.topic}</p>
+      {/if}
     </div>
     {#if showMembers}
       <Members members={chat.members} roomName={room.name} onClose={() => (showMembers = false)} />
     {/if}
-    {#if canInvite}
+    <div class="relative flex shrink-0 items-center gap-3">
+      {#if canInvite}
+        <button
+          class="text-xs text-ink-500 hover:text-ink-300"
+          onclick={() => (inviting = !inviting)}
+        >{inviting ? 'Close' : 'Invite'}</button>
+      {/if}
       <button
-        class="shrink-0 text-xs text-ink-500 hover:text-ink-300"
-        onclick={() => (inviting = !inviting)}
-      >{inviting ? 'Close' : 'Invite'}</button>
-    {/if}
+        class="rounded px-1.5 text-sm leading-none text-ink-500 hover:text-ink-300"
+        aria-label="Room options"
+        aria-expanded={menuOpen}
+        onclick={() => (menuOpen = !menuOpen)}
+      >⋯</button>
+      {#if menuOpen}
+        <button class="fixed inset-0 z-30 cursor-default" tabindex="-1" aria-label="Close menu" onclick={() => (menuOpen = false)}></button>
+        <div class="absolute right-0 top-full z-40 mt-1 w-44 overflow-hidden rounded-lg border border-ink-700 bg-ink-900 py-1 text-xs shadow-xl">
+          {#if room.can_manage}
+            <button
+              class="block w-full px-3 py-1.5 text-left text-ink-300 hover:bg-ink-800"
+              onclick={() => {
+                menuOpen = false
+                showSettings = true
+              }}
+            >Room settings</button>
+          {/if}
+          <button
+            class="block w-full px-3 py-1.5 text-left text-ink-300 hover:bg-ink-800 hover:text-red-300"
+            onclick={() => {
+              menuOpen = false
+              confirmingLeave = true
+            }}
+          >Leave room</button>
+        </div>
+      {/if}
+    </div>
   </header>
 
   {#if inviting}
@@ -235,6 +330,15 @@
   {/if}
 
   <div bind:this={scroller} onscroll={onScroll} class="flex-1 space-y-3 overflow-y-auto px-4 py-3">
+    {#if chat.hasOlder}
+      <div class="text-center">
+        <button
+          class="text-xs text-ink-500 hover:text-ink-300 disabled:opacity-40"
+          disabled={chat.loadingOlder}
+          onclick={loadOlder}
+        >{chat.loadingOlder ? 'Loading…' : 'Load earlier messages'}</button>
+      </div>
+    {/if}
     {#if chat.loadingMessages}
       <p class="text-xs text-ink-500">Loading…</p>
     {:else if chat.messages.length === 0}
@@ -263,11 +367,19 @@
             </span>
           {/if}
           <span class="tnum text-[10px] text-ink-700">{chatTime(message.created_at)}</span>
-          {#if me.role === 'admin' && !message.deleted}
-            <button
-              class="ml-auto text-[10px] text-ink-700 opacity-0 transition group-hover:opacity-100 hover:text-red-400"
-              onclick={() => (removing = message)}
-            >Remove</button>
+          {#if message.edited_at && !message.deleted}
+            <span class="text-[10px] text-ink-700" title="Edited {chatTime(message.edited_at)}">(edited)</span>
+          {/if}
+          {#if !message.deleted && editingId !== message.id}
+            <!-- Shown on hover where there is hover; always on touch screens, which have none. -->
+            <span class="ml-auto flex gap-2 opacity-0 transition group-hover:opacity-100 [@media(hover:none)]:opacity-100">
+              {#if message.author === me.username && !message.author_departed}
+                <button class="text-[10px] text-ink-700 hover:text-ink-300" onclick={() => startEdit(message)}>Edit</button>
+              {/if}
+              {#if message.author === me.username || me.role === 'admin'}
+                <button class="text-[10px] text-ink-700 hover:text-red-400" onclick={() => (removing = message)}>Remove</button>
+              {/if}
+            </span>
           {/if}
         </p>
         {#if message.deleted}
@@ -278,7 +390,26 @@
           <!-- Rendered as segments, never {@html}. linkify() returns data precisely so
                that Svelte keeps escaping both the text and the href — this is the one
                place in the app where another person's arbitrary text reaches the DOM. -->
-          {#if message.body}
+          {#if editingId === message.id}
+            <div class="mt-1 max-w-[70ch]">
+              <!-- svelte-ignore a11y_autofocus -->
+              <textarea
+                bind:value={editText}
+                onkeydown={onEditKeydown}
+                autofocus
+                rows="2"
+                maxlength="4000"
+                class="w-full resize-y rounded-lg border border-accent/60 bg-ink-900 px-3 py-2 text-sm outline-none"
+              ></textarea>
+              <p class="mt-1 flex items-center gap-3 text-[11px] text-ink-500">
+                <button class="text-accent hover:text-accent-dim disabled:opacity-40" disabled={savingEdit} onclick={saveEdit}>
+                  {savingEdit ? 'Saving…' : 'Save'}
+                </button>
+                <button class="hover:text-ink-300" onclick={() => (editingId = null)}>Cancel</button>
+                <span>Enter to save · Esc to cancel</span>
+              </p>
+            </div>
+          {:else if message.body}
           <!-- 70ch: past that, lines get hard to follow, however wide the window. -->
           <p class="mt-0.5 max-w-[70ch] whitespace-pre-wrap text-sm text-ink-100 [overflow-wrap:anywhere]">
             {#each parseMessage(message.body ?? '', message.mentions ?? []) as segment}{#if segment.href}<a
@@ -407,11 +538,26 @@
 {#if removing}
   {@const message = removing}
   <Confirm
-    title="Remove this message?"
-    body="It stays in the room as “Removed by {me.username}”, and its text is erased from the database. Backups taken before now still hold it until they expire. History is permanent here, so nothing is deleted quietly."
+    title={message.author === me.username ? 'Remove your message?' : 'Remove this message?'}
+    body="It stays in the room as “Removed by {me.username}”, so the conversation keeps its shape, and its text is erased from the database. Backups taken before now still hold it until they expire."
     confirmLabel="Remove"
     danger={true}
     onConfirm={() => remove(message)}
     onCancel={() => (removing = null)}
   />
+{/if}
+
+{#if confirmingLeave}
+  <Confirm
+    title="Leave “{room.name}”?"
+    body="You stop seeing its messages and it stops notifying you. What you said stays. To come back, someone who runs the room has to invite you again."
+    confirmLabel="Leave room"
+    danger={true}
+    onConfirm={leave}
+    onCancel={() => (confirmingLeave = false)}
+  />
+{/if}
+
+{#if showSettings}
+  <RoomSettings {room} onClose={() => (showSettings = false)} />
 {/if}

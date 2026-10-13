@@ -113,7 +113,9 @@
             {:else if !mine}
               <!-- The name is visible to everyone on purpose: a room nobody can see is
                    a room nobody can ask to join. -->
-              <span class="shrink-0 text-[10px] uppercase text-ink-700">locked</span>
+              <span class="shrink-0 text-[10px] uppercase text-ink-700">
+                {room.state === 'left' ? 'left' : room.state === 'removed' ? 'removed' : 'locked'}
+              </span>
             {/if}
           </span>
           <span class="mt-0.5 block truncate text-xs text-ink-500">

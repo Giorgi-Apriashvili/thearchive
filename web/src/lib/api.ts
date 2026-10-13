@@ -145,7 +145,7 @@ export interface StorageInfo {
 
 /** How the signed-in account stands with a room. Every room is listed to everyone —
  *  `none` means visible but not enterable, which is what makes one askable-about. */
-export type RoomState = 'none' | 'invited' | 'member' | 'declined'
+export type RoomState = 'none' | 'invited' | 'member' | 'declined' | 'left' | 'removed'
 
 export interface ChatRoom {
   id: number
@@ -155,6 +155,9 @@ export interface ChatRoom {
   created_at: number
   state: RoomState
   is_creator: boolean
+  /** Whether room settings apply to me: the creator while in it, or an administrator. */
+  can_manage: boolean
+  topic?: string
   member_count: number
   /** Only when `state` is `invited`. */
   invited_by?: string
@@ -207,6 +210,8 @@ export interface ChatMessage {
    *  names — a name can be changed and then taken by someone else, so an old `@bob`
    *  may not mean today's bob. */
   mentions_me?: boolean
+  /** Set when the author has edited it; the text served is the edited one. */
+  edited_at?: number
   /** Links attached to the message, resolved when it was read. */
   shares?: ShareCard[]
 }

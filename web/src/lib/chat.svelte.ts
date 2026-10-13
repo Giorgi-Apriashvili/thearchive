@@ -16,8 +16,8 @@ import { notify } from './notify.svelte'
 
 const MESSAGE_MS = 2000
 const ROOM_MS = 10000
-/** Every Nth message poll re-reads the room in full rather than incrementally. */
-const FULL_EVERY = 5
+/** Every Nth message poll also refreshes who is in the room. */
+const MEMBERS_EVERY = 5
 
 class ChatStore {
   rooms = $state<ChatRoom[]>([])
@@ -26,6 +26,9 @@ class ChatStore {
 
   openId = $state<number | null>(null)
   messages = $state<ChatMessage[]>([])
+  /** Whether there is history before the oldest message held — scrolling back loads it. */
+  hasOlder = $state(false)
+  loadingOlder = $state(false)
   loadingMessages = $state(false)
   messagesError = $state('')
   /** Who is in the open room. Feeds the header's member list and the composer's @
@@ -37,6 +40,9 @@ class ChatStore {
   #polls = 0
   /** Highest message id seen, so a poll asks only for what it does not have. */
   #cursor = 0
+  /** The server's clock at the last poll: edits and removals since then come back with
+   *  the next one, so messages already on screen change without re-reading the room. */
+  #changedSince = 0
   /** Highest id reported read, so an unchanged room does not re-POST it every tick. */
   #marked = 0
   #roomsInFlight = false
@@ -102,14 +108,10 @@ class ChatStore {
     if (this.openId === null) return
     this.#messagesInFlight = true
     try {
-      // An admin removal replaces the body of a message the cursor has already passed,
-      // so an incremental poll would never learn of it. Every fifth poll re-reads the
-      // room in full, which picks up tombstones and self-heals any drift.
-      const full = ++this.#polls % FULL_EVERY === 0
-      await this.#pollMessages(full)
-      // Membership changes are rare enough to ride along with that slower beat rather
-      // than getting a request of their own.
-      if (full) await this.loadMembers()
+      await this.#pollMessages()
+      // Membership changes are rare enough to ride along every fifth poll rather than
+      // getting a request of their own.
+      if (++this.#polls % MEMBERS_EVERY === 0) await this.loadMembers()
     } finally {
       this.#messagesInFlight = false
     }
@@ -134,6 +136,8 @@ class ChatStore {
     this.messagesError = ''
     this.#cursor = 0
     this.#marked = 0
+    this.#changedSince = 0
+    this.hasOlder = false
     if (id === null) return
     this.loadingMessages = true
     try {
@@ -155,32 +159,63 @@ class ChatStore {
     }
   }
 
-  async #pollMessages(full = false) {
+  async #pollMessages() {
     const room = this.openId
     if (room === null) return
     try {
-      const { messages } = await api.get<{ messages: ChatMessage[] }>(
-        `/api/chat/rooms/${room}/messages?since=${full ? 0 : this.#cursor}`,
-      )
+      const changed = this.#changedSince ? `&changed=${this.#changedSince}` : ''
+      const data = await api.get<{
+        messages: ChatMessage[]
+        changed?: ChatMessage[]
+        has_older?: boolean
+        now: number
+      }>(`/api/chat/rooms/${room}/messages?since=${this.#cursor}${changed}`)
       // The room may have been switched while this was in flight; appending then would
       // drop someone else's conversation into the open one.
       if (this.openId !== room) return
 
-      if (full) {
-        this.messages = messages
-        this.#cursor = messages.length ? messages[messages.length - 1].id : 0
-      } else if (messages.length > 0) {
+      if (this.#cursor === 0) {
+        this.messages = data.messages
+        this.hasOlder = data.has_older ?? false
+      } else {
         // Deduplicated rather than trusting the cursor: two polls can overlap around a
-        // reload, and a doubled message is worse than a wasted comparison.
-        for (const incoming of messages) {
+        // send, and a doubled message is worse than a wasted comparison.
+        for (const incoming of data.messages) {
           if (!this.messages.some((m) => m.id === incoming.id)) this.messages.push(incoming)
         }
-        this.#cursor = Math.max(this.#cursor, ...messages.map((m) => m.id))
       }
+      if (data.messages.length) {
+        this.#cursor = Math.max(this.#cursor, ...data.messages.map((m) => m.id))
+      }
+      // Edits and removals of messages already held replace them where they stand.
+      for (const updated of data.changed ?? []) {
+        const at = this.messages.findIndex((m) => m.id === updated.id)
+        if (at >= 0) this.messages[at] = updated
+      }
+      this.#changedSince = data.now
       this.messagesError = ''
       await this.#markRead(room)
     } catch (e) {
       this.messagesError = e instanceof ApiError ? e.message : 'could not load messages'
+    }
+  }
+
+  /** Scrolling back: the page of history before the oldest message held. */
+  async loadOlder() {
+    const room = this.openId
+    if (room === null || !this.hasOlder || this.loadingOlder || !this.messages.length) return
+    this.loadingOlder = true
+    try {
+      const data = await api.get<{ messages: ChatMessage[]; has_older: boolean }>(
+        `/api/chat/rooms/${room}/messages?before=${this.messages[0].id}`,
+      )
+      if (this.openId !== room) return
+      this.messages = [...data.messages, ...this.messages]
+      this.hasOlder = data.has_older
+    } catch (e) {
+      this.messagesError = e instanceof ApiError ? e.message : 'could not load earlier messages'
+    } finally {
+      this.loadingOlder = false
     }
   }
 
@@ -205,11 +240,10 @@ class ChatStore {
     if (this.openId !== null) await this.#pollMessages()
   }
 
-  /** Re-reads the open room from scratch, for the client that performed a removal: the
-   *  tombstone lands on an id the cursor has already passed, so an incremental poll
-   *  would leave the remover looking at the text they just took down. */
+  /** Picks up an edit or removal this client just made: it arrives as a change to a
+   *  message already held, which the next poll would bring anyway — this is just sooner. */
   async reload() {
-    await this.#pollMessages(true)
+    await this.#pollMessages()
   }
 }
 

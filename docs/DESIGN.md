@@ -882,6 +882,26 @@ to nothing. The UI renders that differently (`@3` rather than `3`), because bein
 is a different event from something having happened. **Nothing is delivered yet**; the
 count is the substrate a notifier will read.
 
+### Editing, leaving and running a room
+
+Authors can edit their own messages (the new text replaces the old; no version history is
+kept, and mentions are re-resolved against it) and remove them, leaving the same tombstone
+an administrator's removal does. Edits are the author's alone: an admin rewriting someone's
+words would put them in that person's mouth.
+
+Anyone can leave a room; coming back takes a new invitation, as after declining, and what
+they said stays. A room is run by its creator while they are in it, and by administrators:
+rename it, set a topic, remove someone or withdraw an invitation (never the creator), and
+delete it — which takes every message with it, and asks for the room's name typed out.
+
+**History, all of it.** A room opens on its newest 200 messages, and scrolling back fetches
+pages of 100 before the oldest held (`before=<id>`, with `has_older`). **Changes reach
+everyone without re-reading.** `messages.updated_at` is set by an edit or a removal, and a
+poll passes `changed=<now from the last response>` to get those back alongside new
+messages; the server's clock, not the client's, decides "since". This replaced re-reading
+the whole room every fifth poll to catch tombstones, which would also have thrown away
+whatever had been scrolled back to.
+
 ### Notifications
 
 Pop-ups while the site is open, for an unread mention, an unseen send of links, or an
@@ -1070,10 +1090,8 @@ the part to have someone qualified read.
 - **A general request-rate limit.** Password checks are limited; nothing else is. The
   real exposure is bandwidth rather than guessing: anyone holding a public link can
   download it, or its streamed ZIP, as often as they like.
-- **Chat**: editing messages, attachments, typing indicators, per-room notification
-  settings, renaming or deleting a room, and message search. Each is additive; none was
-  needed to know whether the core works. Leaving a room is not there either — the only
-  way out today is never having accepted.
+- **Chat**: typing indicators, per-room notification settings, and message search. Each
+  is additive; none was needed to know whether the core works.
 - **Delivering notifications.** `message_mentions` and `mentions_unread` exist and are
   populated; nothing acts on them yet. Whatever comes — web push, email, a digest —
   reads those rows rather than needing new ones.
