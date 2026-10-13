@@ -345,14 +345,14 @@ how to confirm, on a given deployment, whether the app is seeing real client add
 - **IPv4 clients are seen correctly.** A failed sign-in from outside logged the real
   public address: Docker forwards published IPv4 ports in the kernel, which keeps the
   source address, and Caddy passes it on. Both layers apply.
-- **IPv6 clients are not.** The site has an AAAA record, but the compose network
-  (`deploy_edge`) has IPv6 disabled, so Docker hands IPv6 connections to its userland
-  proxy and Caddy sees the proxy's private address instead of the client's. A request
-  from the host to its own IPv6 address — which crosses the same forwarding — logged
-  `(no public address)`. For IPv6 visitors the per-address layer therefore stands aside,
-  exactly as designed, and only the per-target layer applies. Enabling IPv6 on the compose
-  network would let Docker forward those in the kernel too; that is a change to
-  production networking, and has not been made.
+- **IPv6 clients are seen correctly too, since the edge network has IPv6.** At first the
+  compose network (`deploy_edge`) had IPv6 disabled, so Docker handed IPv6 connections
+  to its userland proxy and Caddy saw the proxy's private address: a request from the
+  host to its own IPv6 address logged `(no public address)`, and for IPv6 visitors only
+  the per-target layer applied. The network now has `enable_ipv6` with a unique-local
+  /64, so Docker forwards published IPv6 ports in the kernel as it does IPv4, and the
+  same request is seen by its real /64. Changing a network's IPv6 setting means
+  recreating it, so that deploy was a `down` and `up` rather than the usual update.
 
 ### Renaming an account
 
@@ -511,9 +511,6 @@ exists: what people type into a username box is sometimes their password. Rows s
 member's current name, falling back to the name at the time once the account is gone. The
 sweep prunes anything older than `activity::kDays` (90), which `/api/privacy` reports, so
 the notice states the period that is enforced. Recording never fails a request.
-
-IPv6 visitors still reach the app through Docker's IPv6-less edge network, so the app sees
-no public address for them and records none; Caddy's line has the gateway's.
 
 ## HTTP surface
 

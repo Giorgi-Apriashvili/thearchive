@@ -75,6 +75,15 @@ services:
 
 networks:
   edge:
+    # IPv6 on, so Docker forwards published IPv6 ports in the kernel, as it does IPv4,
+    # and the client's address survives. Without it Docker relays IPv6 connections
+    # through its userland proxy, and every IPv6 visitor reaches Caddy as the same
+    # private address — invisible to the guessing limit and to the access records.
+    # A unique-local range (fc00::/7), picked at random; the app treats it as private.
+    enable_ipv6: true
+    ipam:
+      config:
+        - subnet: fd0b:8ac5:d30d::/64
 
 volumes:
   caddy_data:
