@@ -384,6 +384,19 @@ control panel. A ~40-line router matches the path and navigates
 with `pushState`; the tab and the open chat room are both **the URL**, so a room is
 linkable, the back button works, and a reload lands where you were.
 
+### Georgian
+
+Inter and Instrument Serif have no Georgian, so names, titles and chat in Georgian fell
+back to whatever font each device had — a second face, or on a device with none, empty
+boxes. Noto Sans Georgian follows Inter in `--font-sans`: a variable font drawn in the
+same plain manner, reached only for characters Inter lacks. Its files carry
+`unicode-range`, so the 41 KB Georgian subset is fetched only by a page that shows
+Georgian text. The wordmark's serif needs no counterpart; it only ever sets the name.
+
+Fonts are never inlined into the CSS (`assetsInlineLimit` in `vite.config.ts`): Vite
+inlines assets under 4 KB as `data:` URLs, which `font-src 'self'` refuses, and two of
+this font's subsets are that small.
+
 ## Deployment
 
 Multi-stage Docker build (builder compiles Drogon + app; runtime carries only shared libs),
@@ -961,10 +974,6 @@ the part to have someone qualified read.
 ## Deliberately deferred
 
 - **Per-user quota.** `users.quota_bytes` exists and nothing enforces it.
-- **A Georgian typeface.** Inter, the bundled font, covers Latin, Cyrillic and Greek but
-  not Georgian, so Georgian text falls back to each device's own Georgian font. It renders,
-  in a second face. Bundling Noto Sans Georgian through `@fontsource` with a
-  `unicode-range` would match it and only load when Georgian appears.
 - **Access logs.** None are kept. Turning on Caddy's `log` directive is one line, but it
   is a decision rather than a default: it means retaining every visitor's address, and
   choosing where the file lives, how it rotates and how long it is kept.

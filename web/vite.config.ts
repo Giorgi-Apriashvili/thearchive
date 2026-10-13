@@ -20,5 +20,9 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     emptyOutDir: true,
+    // Vite inlines small assets as data: URLs, but the Content-Security-Policy allows
+    // fonts only from this origin (font-src 'self'), so an inlined font is refused. Fonts
+    // always go out as files; everything else keeps the default.
+    assetsInlineLimit: (file) => (/\.(woff2?|ttf|otf)$/.test(file) ? false : undefined),
   },
 })

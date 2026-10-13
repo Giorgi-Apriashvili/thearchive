@@ -4,8 +4,16 @@
    IPs leaving the host, and one fewer DNS + TLS handshake before first paint. Vite
    fingerprints and bundles the woff2 files like any other asset.
 
-   Inter is the variable cut, so weights 100-900 come from a single file. */
+   Inter is the variable cut, so weights 100-900 come from a single file.
+
+   Neither Inter nor Instrument Serif has Georgian, which left names, titles and chat in
+   Georgian to whatever font the device happened to have. Noto Sans Georgian fills that
+   gap: a variable font like Inter, drawn in the same plain, open manner. It follows Inter
+   in the stack, so the browser falls through to it only for characters Inter lacks, and
+   its files carry unicode-range — the 41 KB Georgian one is fetched only by a page that
+   actually shows Georgian text. */
 @import '@fontsource-variable/inter';
+@import '@fontsource-variable/noto-sans-georgian';
 @import '@fontsource/instrument-serif';
 
 @theme {
@@ -30,7 +38,8 @@
   --color-role-privileged: var(--color-accent);
   --color-role-user: var(--color-ink-300);
 
-  --font-sans: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-sans: 'Inter Variable', 'Noto Sans Georgian Variable', ui-sans-serif, system-ui,
+    sans-serif;
   /* Reserved for the wordmark. A serif reads as a keepsake rather than as a product,
      which suits somewhere you put photos of your weekends. */
   --font-display: 'Instrument Serif', ui-serif, Georgia, serif;
