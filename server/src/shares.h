@@ -12,6 +12,11 @@ namespace archive {
 // enforces rather than a copy that can drift.
 inline constexpr int kDefaultExpiryDays = 30;
 inline constexpr int kMaxExpiryDays = 365;
+// A link that never expires is stored as expiring at the end of 9999, so every
+// "expires_at > now" — the lookup, the sweep, the cards, the storage count — keeps
+// meaning what it says with nothing special-cased. Only privileged members and
+// administrators may choose it. Clients show any expires_at at or past this as "never".
+inline constexpr std::int64_t kNeverExpires = 253402300799;
 
 // A share as a card, for chat messages and the inbox:
 //   {state, title, token?, file_count, total_bytes, expires_at, password_protected,

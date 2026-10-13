@@ -148,7 +148,7 @@
        Chat mid-upload would silently cost someone a 3 GB video. Chat, by contrast, is
        unmounted when it is not shown, which is what stops its polling. -->
   <div class:hidden={tab !== 'uploads'}>
-    <Uploads visible={tab === 'uploads'} />
+    <Uploads visible={tab === 'uploads'} canNeverExpire={me.role !== 'user'} />
   </div>
 
   {#if tab === 'chat'}

@@ -4,7 +4,7 @@
   // the rest anyway, and offering them would only produce that refusal.
   import { fade, scale } from 'svelte/transition'
   import { api, type ShareSummary } from './api'
-  import { bytes, until } from './format'
+  import { bytes, expiry } from './format'
   import LockIcon from './LockIcon.svelte'
 
   let {
@@ -124,7 +124,7 @@
                   </span>
                   <span class="tnum block text-xs text-ink-500">
                     {link.file_count} file{link.file_count === 1 ? '' : 's'} · {bytes(link.total_bytes)}
-                    · expires in {until(link.expires_at)}
+                    · {expiry(link.expires_at)}
                     · {link.visibility === 'public' ? 'anyone with the link' : 'members only'}
                   </span>
                 </span>

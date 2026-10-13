@@ -318,6 +318,30 @@ check "a bad visibility beside a good expiry changes neither" \
 check "another member cannot change it" "$(expiry "$OTHER" "$TOKV" '{"expires_days":365}'),$(expires_in_days "$TOKV")" "404,30"
 check "nor can someone signed out" "$(expiry /dev/null "$TOKV" '{"expires_days":365}')" "401"
 
+# Never expiring: privileged members and administrators only, stored as the end of 9999 so
+# every "expires_at > now" holds without special cases.
+NEVER=253402300799
+expires_at() { sql "SELECT expires_at FROM shares WHERE token='$1';"; }
+check "an administrator makes a link never expire" "$(expiry "$JAR" "$TOKV" '{"never_expires":true}'),$(expires_at "$TOKV")" "200,$NEVER"
+check "and it is recorded as such" "$(sql "SELECT detail FROM activity WHERE event='link.changed' ORDER BY id DESC LIMIT 1;" | grep -c 'never expires')" "1"
+check "it reads as working" "$(curl -s -o /dev/null -w '%{http_code}' -b "$JAR" "$BASE/api/shares/$TOKV")" "200"
+check "and can be given an expiry again" "$(expiry "$JAR" "$TOKV" '{"expires_days":30}'),$(expires_in_days "$TOKV")" "200,30"
+check "never_expires: false changes nothing" "$(expiry "$JAR" "$TOKV" '{"never_expires":false}')" "400"
+head -c 2048 /dev/urandom > "$WORK/theirs-n.bin"
+OTHERS=$(curl -s -b "$OTHER" -X POST "$BASE/api/shares" -H 'Content-Type: application/json' \
+    -d "{\"uploads\":[\"$(JAR="$OTHER" upload "$WORK/theirs-n.bin")\"]}" | jget token)
+check "an ordinary member cannot make one" \
+    "$(curl -s -o /dev/null -w '%{http_code}' -b "$OTHER" -X POST "$BASE/api/shares" -H 'Content-Type: application/json' \
+       -d "{\"uploads\":[\"$(JAR="$OTHER" upload "$WORK/theirs-n.bin")\"],\"never_expires\":true}")" "403"
+check "nor turn their own link into one" "$(expiry "$OTHER" "$OTHERS" '{"never_expires":true}')" "403"
+OTHER_ID=$(sql "SELECT id FROM users WHERE username='bystander';")
+curl -s -o /dev/null -b "$JAR" -X POST "$BASE/api/admin/users/$OTHER_ID/role" -H 'Content-Type: application/json' -d '{"role":"privileged"}'
+check "a privileged member can" "$(expiry "$OTHER" "$OTHERS" '{"never_expires":true}'),$(expires_at "$OTHERS")" "200,$NEVER"
+check "including when making one" \
+    "$(curl -s -b "$OTHER" -X POST "$BASE/api/shares" -H 'Content-Type: application/json' \
+       -d "{\"uploads\":[\"$(JAR="$OTHER" upload "$WORK/theirs-n.bin")\"],\"never_expires\":true}" | python3 -c "import sys,json;print(json.load(sys.stdin)['expires_at'])")" "$NEVER"
+curl -s -o /dev/null -b "$JAR" -X POST "$BASE/api/admin/users/$OTHER_ID/role" -H 'Content-Type: application/json' -d '{"role":"user"}'
+
 # Its own file, so the sweep releasing it leaves the refcounts below untouched.
 head -c 4096 /dev/urandom > "$WORK/lapsed.bin"
 LAPSED=$(curl -s -b "$JAR" -X POST "$BASE/api/shares" -H 'Content-Type: application/json' \

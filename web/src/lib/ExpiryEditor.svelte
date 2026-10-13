@@ -2,13 +2,20 @@
   // Changing when one of your links expires. The new time is counted from now, as it is
   // when a link is created, so "7 days" can shorten a link as well as extend it.
   import { api, ApiError } from './api'
-  import { expiryChoices, until } from './format'
+  import { expiryChoices, neverExpires, until } from './format'
 
   let {
     token,
     expiresAt,
     onChanged,
-  }: { token: string; expiresAt: number; onChanged: (expiresAt: number) => void } = $props()
+    canNever = false,
+  }: {
+    token: string
+    expiresAt: number
+    onChanged: (expiresAt: number) => void
+    /** Offer "Never": privileged members and admins. The server checks again. */
+    canNever?: boolean
+  } = $props()
 
   let days = $state(30)
   let busy = $state(false)
@@ -34,7 +41,8 @@
     saved = false
     try {
       const out = await api.patch<{ expires_at: number }>(`/api/shares/${token}`, {
-        expires_days: days,
+        // 0 in the menu is "Never".
+        ...(days === 0 ? { never_expires: true } : { expires_days: days }),
       })
       onChanged(out.expires_at)
       saved = true
@@ -54,7 +62,11 @@
     </p>
   {:else}
     <p class="text-ink-500">
-      Expires <span class="tnum text-ink-300">{when}</span>, in {until(expiresAt)}.
+      {#if neverExpires(expiresAt)}
+        Never expires: its files stay until you remove it.
+      {:else}
+        Expires <span class="tnum text-ink-300">{when}</span>, in {until(expiresAt)}.
+      {/if}
     </p>
     <div class="mt-2 flex flex-wrap items-center gap-2">
       <label class="flex items-center gap-2">
@@ -67,6 +79,9 @@
           {#each expiryChoices as choice (choice.days)}
             <option value={choice.days}>{choice.label} from now</option>
           {/each}
+          {#if canNever}
+            <option value={0}>Never expire</option>
+          {/if}
         </select>
       </label>
       <button

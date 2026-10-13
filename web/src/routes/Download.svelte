@@ -1,6 +1,6 @@
 <script lang="ts">
   import { api, ApiError, type ShareDetail } from '../lib/api'
-  import { bytes, shortDate, until } from '../lib/format'
+  import { bytes, expiry, shortDate } from '../lib/format'
   import Lightbox from '../lib/Lightbox.svelte'
   import { link } from '../lib/router.svelte'
   import MemberName from '../lib/MemberName.svelte'
@@ -116,7 +116,7 @@
   {:else if share}
     <h1 class="mt-8 text-xl font-semibold tracking-tight">{share.title || 'Shared files'}</h1>
     <p class="tnum mt-1 text-sm text-ink-500">
-      Shared {shortDate(share.created_at)} · expires in {until(share.expires_at)}
+      Shared {shortDate(share.created_at)} · {expiry(share.expires_at)}
       {#if remaining !== null}
         · {remaining} download{remaining === 1 ? '' : 's'} left
       {/if}

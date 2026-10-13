@@ -3,7 +3,7 @@
   // it was fetched, so a link that has since expired says so here instead of being a click
   // that fails.
   import type { ShareCard } from './api'
-  import { bytes, until } from './format'
+  import { bytes, expiry } from './format'
   import LockIcon from './LockIcon.svelte'
 
   let { card }: { card: ShareCard } = $props()
@@ -41,7 +41,7 @@
     </p>
     <p class="tnum mt-0.5 text-xs text-ink-500">
       {card.file_count} file{card.file_count === 1 ? '' : 's'} · {bytes(card.total_bytes ?? 0)}
-      {#if card.expires_at}· expires in {until(card.expires_at)}{/if}
+      {#if card.expires_at}· {expiry(card.expires_at)}{/if}
     </p>
   </a>
 {:else}

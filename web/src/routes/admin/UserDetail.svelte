@@ -1,6 +1,6 @@
 <script lang="ts">
   import { api, ApiError, type AccountStorage } from '../../lib/api'
-  import { bytes, shortDate, until } from '../../lib/format'
+  import { bytes, expiry, shortDate } from '../../lib/format'
   import { router, link } from '../../lib/router.svelte'
   import VisibilityToggle from '../../lib/VisibilityToggle.svelte'
   import Confirm from '../../lib/Confirm.svelte'
@@ -354,7 +354,7 @@
               <p class="tnum mt-0.5 text-xs text-ink-500">
                 {share.file_count} file{share.file_count === 1 ? '' : 's'} ·
                 {bytes(share.total_bytes)} · {share.download_count} download{share.download_count === 1 ? '' : 's'}
-                {#if !share.revoked}· expires in {until(share.expires_at)}{/if}
+                {#if !share.revoked}· {expiry(share.expires_at)}{/if}
                 {#if share.password_protected}· password{/if}
               </p>
             </div>

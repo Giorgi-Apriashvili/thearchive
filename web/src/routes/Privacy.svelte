@@ -202,7 +202,8 @@
             {days(r.link_default_days)} unless its creator chose otherwise — or is revoked,
             whichever comes first. A link can be set to last at most {days(r.link_max_days)} at a
             time; its creator can change that while it still works, and each change counts from
-            that moment. They are then deleted
+            that moment. Privileged members and administrators can also make a link that does
+            not expire, whose files stay until the link is removed. They are then deleted
             within {minutes(r.sweep_minutes)}, unless the same file is still in another link that
             has not expired. Previews go with their file, and the record of who downloaded a link
             goes with the link. Anything uploaded but never made into a link is deleted within

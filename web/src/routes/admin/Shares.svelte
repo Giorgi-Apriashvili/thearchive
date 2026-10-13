@@ -1,6 +1,6 @@
 <script lang="ts">
   import { api, ApiError } from '../../lib/api'
-  import { bytes, until } from '../../lib/format'
+  import { bytes, expiry } from '../../lib/format'
   import VisibilityToggle from '../../lib/VisibilityToggle.svelte'
 
   interface AdminShare {
@@ -52,7 +52,7 @@
         </a>
         <p class="tnum mt-0.5 text-xs text-ink-500">
           {share.owner} · {share.file_count} file{share.file_count === 1 ? '' : 's'} ·
-          {bytes(share.total_bytes)} · expires in {until(share.expires_at)} ·
+          {bytes(share.total_bytes)} · {expiry(share.expires_at)} ·
           {share.download_count} download{share.download_count === 1 ? '' : 's'}
           {#if share.password_protected}· password{/if}
         </p>

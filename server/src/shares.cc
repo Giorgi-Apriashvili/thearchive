@@ -359,6 +359,10 @@ std::string archiveName(const std::string& title, const std::string& token) {
     return base + ".zip";
 }
 
+// The expiry a request asks for: {never_expires: true}, or {expires_days: n} counted from
+// `now` (the default when neither is given). Never is refused to ordinary members.
+std::int64_t chosenExpiry(const Json::Value& json, const User& user, std::int64_t now);
+
 int clampExpiryDays(const Json::Value& json) {
     if (!json.isMember("expires_days")) {
         return kDefaultExpiryDays;
@@ -372,6 +376,30 @@ int clampExpiryDays(const Json::Value& json) {
                                  std::to_string(kMaxExpiryDays)};
     }
     return days;
+}
+
+bool wantsNever(const Json::Value& json) {
+    return json.isMember("never_expires") && json["never_expires"].isBool() &&
+           json["never_expires"].asBool();
+}
+
+std::int64_t chosenExpiry(const Json::Value& json, const User& user, std::int64_t now) {
+    if (wantsNever(json)) {
+        if (user.role != "privileged" && user.role != "admin") {
+            throw HttpError{403, "only privileged members and administrators can make a link "
+                                 "that never expires"};
+        }
+        return kNeverExpires;
+    }
+    return now + std::int64_t{clampExpiryDays(json)} * 86400;
+}
+
+// How an expiry reads in the activity log.
+std::string describeExpiry(std::int64_t expiresAt, std::int64_t now) {
+    if (expiresAt >= kNeverExpires) {
+        return "never expires";
+    }
+    return "expires in " + std::to_string((expiresAt - now + 43200) / 86400) + " day(s)";
 }
 
 }  // namespace
@@ -594,7 +622,6 @@ void registerShareRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
                     throw HttpError{400, "too many files in one share"};
                 }
 
-                const int days = clampExpiryDays(body);
                 const std::string title = optionalString(body, "title");
                 const std::string password = optionalString(body, "password");
                 const bool hasMaxDownloads =
@@ -612,6 +639,7 @@ void registerShareRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
                     body["public"].asBool();
 
                 const std::int64_t now = nowSeconds();
+                const std::int64_t expiresAt = chosenExpiry(body, user, now);
                 const std::string token = crypto::randomToken(16);
                 const std::string passwordHash =
                     password.empty() ? std::string{} : crypto::hashPassword(password);
@@ -625,7 +653,7 @@ void registerShareRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
                 insertShare.bind(1, token).bind(2, user.id);
                 title.empty() ? insertShare.bindNull(3) : insertShare.bind(3, title);
-                insertShare.bind(4, now).bind(5, now + std::int64_t{days} * 86400);
+                insertShare.bind(4, now).bind(5, expiresAt);
                 passwordHash.empty() ? insertShare.bindNull(6)
                                      : insertShare.bind(6, passwordHash);
                 hasMaxDownloads ? insertShare.bind(7, maxDownloads) : insertShare.bindNull(7);
@@ -639,12 +667,13 @@ void registerShareRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
                 tx.commit();
                 activity::record(req, user, "link.created",
                                  linkLabel(title) + " · " +
-                                     std::to_string(body["uploads"].size()) + " file(s)");
+                                     std::to_string(body["uploads"].size()) + " file(s) · " +
+                                     describeExpiry(expiresAt, now));
 
                 Json::Value out;
                 out["token"] = token;
                 out["url"] = publicBaseUrl() + "/d/" + token;
-                out["expires_at"] = static_cast<Json::Int64>(now + std::int64_t{days} * 86400);
+                out["expires_at"] = static_cast<Json::Int64>(expiresAt);
                 out["file_count"] = static_cast<Json::Int64>(body["uploads"].size());
                 out["total_bytes"] = static_cast<Json::Int64>(totalBytes);
                 out["visibility"] = isPublic ? "public" : "private";
@@ -652,7 +681,7 @@ void registerShareRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
                 resp->setStatusCode(drogon::k201Created);
                 LOG_INFO << "share " << token << " by " << user.username << ": "
                          << body["uploads"].size() << " file(s), " << totalBytes
-                         << " bytes, " << days << "d, "
+                         << " bytes, " << describeExpiry(expiresAt, now) << ", "
                          << (isPublic ? "public" : "private");
                 return resp;
             }));
@@ -690,8 +719,11 @@ void registerShareRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
                     const User user = requireUser(req, auth);
                     std::shared_ptr<Json::Value> holder;
                     const Json::Value& json = requireJson(req, holder);
-                    if (!json.isMember("visibility") && !json.isMember("expires_days")) {
-                        throw HttpError{400, "nothing to change: give visibility or expires_days"};
+                    if (!json.isMember("visibility") && !json.isMember("expires_days") &&
+                        !wantsNever(json)) {
+                        throw HttpError{400,
+                                        "nothing to change: give visibility, expires_days or "
+                                        "never_expires"};
                     }
 
                     std::optional<std::string> wanted;
@@ -708,8 +740,8 @@ void registerShareRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
                     // Counted from now, as at creation: "a week" means a week from when
                     // you said it. Shortening is allowed as much as extending.
                     std::optional<std::int64_t> expiresAt;
-                    if (json.isMember("expires_days")) {
-                        expiresAt = nowSeconds() + std::int64_t{clampExpiryDays(json)} * 86400;
+                    if (json.isMember("expires_days") || wantsNever(json)) {
+                        expiresAt = chosenExpiry(json, user, nowSeconds());
                     }
 
                     // Owner-scoped: the WHERE clause is the authorisation, and one 404
@@ -755,8 +787,8 @@ void registerShareRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
                     std::string change;
                     if (wanted) change = *wanted;
                     if (expiresAt) {
-                        change += std::string{change.empty() ? "" : ", "} + "expires in " +
-                                  std::to_string(clampExpiryDays(json)) + " day(s)";
+                        change += std::string{change.empty() ? "" : ", "} +
+                                  describeExpiry(*expiresAt, nowSeconds());
                     }
                     activity::record(req, user, "link.changed",
                                      linkLabel(read.columnText(2)) + ": " + change);

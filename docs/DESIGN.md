@@ -231,7 +231,16 @@ downloads are not recorded, being noise in a list that answers "did they get it?
 the owner can read it (`GET /api/shares/{token}/downloads`), the privacy notice says so,
 and the rows go when the sweep releases the link: nothing about a link outlives it.
 
-Expiry is 1–365 days, defaulting to 30. The owner can change it while the link still
+Privileged members and administrators can make a link that never expires
+(`never_expires: true`, at creation or as a change; ordinary members get a 403). It is
+stored as expiring at the end of 9999 (`kNeverExpires`) rather than as NULL, so every
+`expires_at > now` — the lookup, the sweep, link cards, storage counting — keeps meaning
+what it says with nothing special-cased, and a missed case cannot quietly treat such a
+link as already expired. Clients show any expiry at or past it as "never expires". Its files
+stay until the link is removed, and count against the owner's storage limit meanwhile.
+A demotion leaves existing never-expiring links as they were made.
+
+Expiry is otherwise 1–365 days, defaulting to 30. The owner can change it while the link still
 works (`PATCH /api/shares/{token}` with `expires_days`), counted from that moment as at
 creation, so it can shorten a link as well as extend it — and a link kept extended can
 outlive 365 days in total, which the privacy notice says. An expired link cannot be

@@ -10,6 +10,19 @@ export function bytes(value: number): string {
   return `${n < 10 ? n.toFixed(1) : Math.round(n)} ${units[unit]}`
 }
 
+/** A link that never expires is stored as expiring at the end of 9999 (kNeverExpires on
+ *  the server), so anything at or past this reads as "never". */
+export const NEVER_EXPIRES = 253402300799
+
+export function neverExpires(epochSeconds: number): boolean {
+  return epochSeconds >= NEVER_EXPIRES
+}
+
+/** "expires in 30 days", or "never expires". */
+export function expiry(epochSeconds: number): string {
+  return neverExpires(epochSeconds) ? 'never expires' : `expires in ${until(epochSeconds)}`
+}
+
 /** How long a link can be set to last, counted from now: at creation, and when changed. */
 export const expiryChoices: { days: number; label: string }[] = [
   { days: 1, label: '1 day' },

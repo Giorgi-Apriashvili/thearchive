@@ -81,7 +81,7 @@ U=$(upload "$ALICE" "$WORK/a.bin")
 check "a finished upload is recorded" "$(latest | cut -d'|' -f1,2,3)" "upload.completed|alice|a.bin · 4096 bytes"
 TOK=$(curl -s -b "$ALICE" -X POST "$BASE/api/shares" -H 'Content-Type: application/json' \
       -d "{\"uploads\":[\"$U\"],\"title\":\"Lake\",\"public\":true,\"password\":\"hunter22\"}" | py "import sys,json;print(json.load(sys.stdin)['token'])")
-check "making a link, by its title" "$(latest | cut -d'|' -f1,2,3)" "link.created|alice|“Lake” · 1 file(s)"
+check "making a link, by its title" "$(latest | cut -d'|' -f1,2,3)" "link.created|alice|“Lake” · 1 file(s) · expires in 30 day(s)"
 FID=$(curl -s -b "$ALICE" "$BASE/api/shares/$TOK" | py "import sys,json;print(json.load(sys.stdin)['files'][0]['id'])")
 check "the owner opening it is not worth a record" "$(latest | cut -d'|' -f1)" "link.created"
 code -H 'X-Share-Password: wrong' "$BASE/api/shares/$TOK" >/dev/null

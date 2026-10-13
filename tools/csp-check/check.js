@@ -123,6 +123,18 @@ const PASS = 'correct-horse-battery'
     await page.getByText(/, in 365 days\./).waitFor()
   })
 
+  await step('a link that never expires (admins and privileged members)', async () => {
+    // Still expanded from the step before.
+    const editor = page.locator('select').filter({ hasText: 'from now' })
+    await editor.selectOption('0')
+    await page.getByRole('button', { name: 'Save', exact: true }).click()
+    await page.getByText('Never expires: its files stay').waitFor()
+    await page.waitForFunction(() => document.body.innerText.includes('· never expires ·'))
+    await editor.selectOption('365')
+    await page.getByRole('button', { name: 'Save', exact: true }).click()
+    await page.getByText(/, in 365 days\./).waitFor()
+  })
+
   await step('chat: create a room', async () => {
     await page.goto('/chat')
     await page.getByPlaceholder('New room').fill('CSP test')

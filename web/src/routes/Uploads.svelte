@@ -11,7 +11,7 @@
     type ShareSummary,
     type StorageInfo,
   } from '../lib/api'
-  import { bytes, chatTime, expiryChoices, until } from '../lib/format'
+  import { bytes, chatTime, expiry, expiryChoices, until } from '../lib/format'
   import { inbox } from '../lib/inbox.svelte'
   import { uploading } from '../lib/uploading.svelte'
   import VisibilityToggle from '../lib/VisibilityToggle.svelte'
@@ -24,7 +24,10 @@
   // This pane stays mounted while Chat is showing, so that uploads in flight survive a
   // tab switch. `visible` is what stops links sent to you being marked seen while you are
   // looking at a chat room instead.
-  let { visible = true }: { visible?: boolean } = $props()
+  // `canNeverExpire`: privileged members and admins may make links that never expire. The
+  // server enforces it; this only decides whether to offer the choice.
+  let { visible = true, canNeverExpire = false }: { visible?: boolean; canNeverExpire?: boolean } =
+    $props()
 
   // Load the inbox when this pane is on screen, and again whenever something new arrives
   // while it is — then mark it seen, which is what clears the badge.
@@ -372,9 +375,10 @@
     error = ''
     creating = true
     try {
+      // 0 in the menu is "Never".
       const body: Record<string, unknown> = {
         uploads: ready.map((i) => i.uploadId),
-        expires_days: expiresDays,
+        ...(expiresDays === 0 ? { never_expires: true } : { expires_days: expiresDays }),
       }
       if (title.trim()) body.title = title.trim()
       if (password) body.password = password
@@ -682,7 +686,15 @@
               {#each expiryChoices as choice (choice.days)}
                 <option value={choice.days}>{choice.label}</option>
               {/each}
+              {#if canNeverExpire}
+                <option value={0}>Never</option>
+              {/if}
             </select>
+            {#if expiresDays === 0}
+              <span class="mt-1 block text-xs text-ink-500">
+                Its files stay until you remove the link, and count against your space until then.
+              </span>
+            {/if}
           </label>
           <label class="block">
             <span class="text-xs text-ink-500">Max downloads (optional)</span>
@@ -748,7 +760,7 @@
     {#if created}
       <div class="mt-6 rounded-xl border border-accent/40 bg-accent/5 p-4">
         <p class="text-xs text-ink-500">
-          Link created — expires in {until(created.expires_at)} ·
+          Link created — {expiry(created.expires_at)} ·
           {created.visibility === 'public' ? 'anyone with the link' : 'members only'}
         </p>
         <div class="mt-2 flex items-center gap-3">
@@ -830,7 +842,7 @@
                   </button>
                   <p class="tnum mt-0.5 text-xs text-ink-500">
                     {share.file_count} file{share.file_count === 1 ? '' : 's'} · {bytes(share.total_bytes)} ·
-                    expires in {until(share.expires_at)} · {share.download_count} download{share.download_count ===
+                    {expiry(share.expires_at)} · {share.download_count} download{share.download_count ===
                     1
                       ? ''
                       : 's'}
@@ -923,6 +935,7 @@
                   <ExpiryEditor
                     token={share.token}
                     expiresAt={share.expires_at}
+                    canNever={canNeverExpire}
                     onChanged={(next) => (share.expires_at = next)}
                   />
                 {/if}
