@@ -598,13 +598,32 @@ check "with when it will be deleted" \
     "$(pending "$JAR" "json.load(sys.stdin)['uploads'][0]['expires_at'] > 0")" "True"
 HALF=$(curl -s -D - -o /dev/null -b "$JAR" -X POST "$BASE/files" \
     -H "Upload-Length: 65536" -H "Upload-Metadata: filename $(printf 'half.bin' | base64 -w0)" | hdr Location)
-check "an unfinished one is not" "$(pending "$JAR" "len(json.load(sys.stdin)['uploads'])")" "1"
+check "an unfinished one is not offered as ready" "$(pending "$JAR" "len(json.load(sys.stdin)['uploads'])")" "1"
+# …but is listed as unfinished, with how far it got, so the same file can continue it.
+head -c 65536 /dev/urandom > "$WORK/resume.bin"
+RES=$(curl -s -D - -o /dev/null -b "$JAR" -X POST "$BASE/files" -H "Upload-Length: 65536" \
+    -H "Upload-Metadata: filename $(printf 'resume.bin' | base64 -w0),lastModified $(printf '1700000000000' | base64 -w0)" | hdr Location)
+head -c 20000 "$WORK/resume.bin" | curl -s -o /dev/null -b "$JAR" -X PATCH "$BASE$RES" \
+    -H 'Content-Type: application/offset+octet-stream' -H 'Upload-Offset: 0' --data-binary @-
+check "an interrupted upload is listed as unfinished, with its progress" \
+    "$(pending "$JAR" "[(u['filename'], u['size'], u['offset'], u['modified']) for u in json.load(sys.stdin)['unfinished'] if u['id']=='${RES##*/}']")" \
+    "[('resume.bin', 65536, 20000, 1700000000)]"
+tail -c +20001 "$WORK/resume.bin" | curl -s -o /dev/null -b "$JAR" -X PATCH "$BASE$RES" \
+    -H 'Content-Type: application/offset+octet-stream' -H 'Upload-Offset: 20000' --data-binary @-
+check "continuing from that offset finishes it" \
+    "$(pending "$JAR" "'${RES##*/}' in [u['id'] for u in json.load(sys.stdin)['uploads']]")" "True"
+check "into the right file" \
+    "$(sql "SELECT blob_sha256 FROM uploads WHERE id='${RES##*/}';")" "$(sha256sum < "$WORK/resume.bin" | cut -d' ' -f1)"
+curl -s -o /dev/null -b "$JAR" -X DELETE "$BASE$RES"
+check "an expired one is not listed" \
+    "$(sql "UPDATE uploads SET expires_at = 0 WHERE id='${HALF##*/}';"; pending "$JAR" "len(json.load(sys.stdin)['unfinished'])"; sql "UPDATE uploads SET expires_at = strftime('%s','now') + 3600 WHERE id='${HALF##*/}';")" "0"
 INVP=$(curl -s -b "$JAR" -X POST "$BASE/api/invites" | jget code)
 PEER=$(mktemp)
 curl -s -o /dev/null -c "$PEER" -X POST "$BASE/api/auth/register" \
     -H 'Content-Type: application/json' \
     -d "{\"invite\":\"$INVP\",\"username\":\"peer\",\"password\":\"correct-horse-battery\"}"
 check "nor are they anyone else's" "$(pending "$PEER" "len(json.load(sys.stdin)['uploads'])")" "0"
+check "finished or not" "$(pending "$PEER" "len(json.load(sys.stdin)['unfinished'])")" "0"
 rm -f "$PEER"
 curl -s -o /dev/null -b "$JAR" -X POST "$BASE/api/shares" -H 'Content-Type: application/json' \
     -d "{\"uploads\":[\"$LEFT\"]}"

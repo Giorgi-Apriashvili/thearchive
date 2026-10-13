@@ -415,6 +415,73 @@ const PASS = 'correct-horse-battery'
     }
   })
 
+  // Starts an upload of PHOTO straight against the server, as a tab that was closed
+  // part-way would have left it, and sends the first half. Returns its id.
+  async function halfUpload() {
+    const fs = require('fs')
+    const body = fs.readFileSync(PHOTO)
+    const meta = [
+      `filename ${Buffer.from('photo.jpg').toString('base64')}`,
+      `lastModified ${Buffer.from(String(Math.floor(fs.statSync(PHOTO).mtimeMs))).toString('base64')}`,
+    ].join(',')
+    const created = await page.request.post('/files', {
+      headers: { 'Tus-Resumable': '1.0.0', 'Upload-Length': String(body.length), 'Upload-Metadata': meta },
+    })
+    const url = created.headers()['location']
+    await page.request.patch(url, {
+      headers: { 'Tus-Resumable': '1.0.0', 'Upload-Offset': '0', 'Content-Type': 'application/offset+octet-stream' },
+      data: body.subarray(0, Math.floor(body.length / 2)),
+    })
+    return { id: url.split('/').pop(), half: Math.floor(body.length / 2) }
+  }
+
+  await step('an interrupted upload continues where it stopped', async () => {
+    const { id, half } = await halfUpload()
+    await page.goto('/')
+    await page.getByText(/stopped part-way/).waitFor()
+    await page.getByText(/· 50% of/).waitFor()
+    const offsets = []
+    page.on('request', (r) => {
+      if (r.method() === 'PATCH' && r.url().endsWith(id)) offsets.push(Number(r.headers()['upload-offset']))
+    })
+    await page.setInputFiles('input[type=file]', PHOTO)
+    await page.getByText(/stopped part-way/).waitFor({ state: 'detached' })
+    await page.getByRole('button', { name: /^Create link for 1 file/ }).waitFor({ timeout: 15000 })
+    if (offsets[0] !== half) throw new Error(`expected to continue from ${half}, sent from ${offsets[0]}`)
+    const pending = await (await page.request.get('/api/uploads')).json()
+    if (!pending.uploads.some((u) => u.id === id)) throw new Error('the upload finished under a new id instead')
+    const item = page.locator('#upload-list li').first()
+    await item.getByRole('button', { name: 'Remove', exact: true }).click()
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Remove file' }).click()
+  })
+
+  await step('a failed upload can be retried', async () => {
+    await page.goto('/')
+    await page.route('**/files/*', (route) =>
+      route.request().method() === 'PATCH' ? route.abort('internetdisconnected') : route.continue(),
+    )
+    await page.setInputFiles('input[type=file]', PHOTO)
+    // tus retries on its own first, for about twenty seconds, then gives up.
+    const retry = page.getByRole('button', { name: 'Retry', exact: true })
+    await retry.waitFor({ timeout: 40000 })
+    await page.unroute('**/files/*')
+    await retry.click()
+    await page.getByRole('button', { name: /^Create link for 1 file/ }).waitFor({ timeout: 15000 })
+    const item = page.locator('#upload-list li').first()
+    await item.getByRole('button', { name: 'Remove', exact: true }).click()
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Remove file' }).click()
+  })
+
+  await step('an unfinished upload can be discarded', async () => {
+    const { id } = await halfUpload()
+    await page.goto('/')
+    await page.getByRole('button', { name: 'Discard', exact: true }).click()
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Discard' }).click()
+    await page.getByText(/stopped part-way/).waitFor({ state: 'detached' })
+    const pending = await (await page.request.get('/api/uploads')).json()
+    if (pending.unfinished.some((u) => u.id === id)) throw new Error('still on the server')
+  })
+
   await step('leaving mid-upload asks first; afterwards it does not', async () => {
     await page.goto('/')
     // Hold the upload mid-transfer: its PATCH requests wait until released.

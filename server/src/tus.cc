@@ -524,8 +524,33 @@ void registerUploadRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
                     upload["expires_at"] = static_cast<Json::Int64>(stmt.columnInt(4));
                     uploads.append(upload);
                 }
+                // Unfinished ones too, so a transfer cut off by a closed tab, a crash or a
+                // dropped connection can be continued: choosing the same file again —
+                // matched on name, size and modification time — resumes from `offset`
+                // rather than from the start, from any browser, until it expires.
+                auto partial = db.prepare(
+                    "SELECT id, COALESCE(filename, 'download'), total_size, offset_bytes, "
+                    "       COALESCE(client_mtime, 0), expires_at "
+                    "FROM uploads WHERE owner_id = ? AND completed_at IS NULL AND expires_at > ? "
+                    "ORDER BY created_at, id");
+                partial.bind(1, user.id).bind(2, nowSeconds());
+                Json::Value unfinished{Json::arrayValue};
+                while (partial.step()) {
+                    Json::Value upload;
+                    upload["id"] = partial.columnText(0);
+                    upload["filename"] = partial.columnText(1);
+                    upload["size"] = static_cast<Json::Int64>(partial.columnInt(2));
+                    upload["offset"] = static_cast<Json::Int64>(partial.columnInt(3));
+                    if (const std::int64_t mtime = partial.columnInt(4); mtime > 0) {
+                        upload["modified"] = static_cast<Json::Int64>(mtime);
+                    }
+                    upload["expires_at"] = static_cast<Json::Int64>(partial.columnInt(5));
+                    unfinished.append(upload);
+                }
+
                 Json::Value out;
                 out["uploads"] = uploads;
+                out["unfinished"] = unfinished;
                 auto resp = drogon::HttpResponse::newHttpJsonResponse(out);
                 resp->addHeader("Cache-Control", "no-store");
                 return resp;

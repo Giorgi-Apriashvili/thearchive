@@ -61,6 +61,44 @@
     expires_at: number
   }
 
+  /** An upload that stopped part-way — a closed tab, a crash, a dropped connection. The
+   *  server keeps what arrived until `expires_at`; choosing the same file again continues
+   *  from `offset`. `modified` is the file's last-modified time, in seconds. */
+  interface UnfinishedUpload {
+    id: string
+    filename: string
+    size: number
+    offset: number
+    modified?: number
+    expires_at: number
+  }
+
+  let unfinished = $state<UnfinishedUpload[]>([])
+  let discarding = $state<UnfinishedUpload | null>(null)
+
+  // The same file, as far as can be told without reading it: name, size and modification
+  // time all equal. A different file matching all three would be continued as if it were
+  // this one, so the time is required whenever the server has one.
+  function previousAttempt(file: File): UnfinishedUpload | undefined {
+    return unfinished.find(
+      (u) =>
+        u.filename === file.name &&
+        u.size === file.size &&
+        (u.modified === undefined || u.modified === Math.floor(file.lastModified / 1000)),
+    )
+  }
+
+  async function discard(upload: UnfinishedUpload) {
+    discarding = null
+    try {
+      await api.del(`/files/${upload.id}`)
+    } catch {
+      // Already gone; nothing left to discard.
+    }
+    unfinished = unfinished.filter((u) => u.id !== upload.id)
+    await loadShares()
+  }
+
   let items = $state<Item[]>([])
   let shares = $state<ShareSummary[]>([])
   let dragging = $state(false)
@@ -94,8 +132,13 @@
   // pressing "Create link" costs nothing — for as long as they have not expired.
   async function loadPending() {
     try {
-      const { uploads } = await api.get<{ uploads: PendingUpload[] }>('/api/uploads')
+      const data = await api.get<{ uploads: PendingUpload[]; unfinished: UnfinishedUpload[] }>(
+        '/api/uploads',
+      )
+      const { uploads } = data
       const known = new Set(items.map((i) => i.uploadId))
+      // Ones already continuing in this tab are not "unfinished" from here.
+      unfinished = data.unfinished.filter((u) => !known.has(u.id))
       for (const upload of uploads) {
         if (known.has(upload.id)) continue
         items.push({
@@ -159,11 +202,13 @@
       // the object literal above is the raw target — mutating it from the callbacks
       // below would update the data without notifying the proxy's signals, leaving
       // progress stuck at 0% and the file never appearing as finished.
+      const previous = previousAttempt(file)
+      if (previous) unfinished = unfinished.filter((u) => u !== previous)
       items.push({
         key: `file:${nextKey++}`,
         name: file.name,
-        uploadId: null,
-        sent: 0,
+        uploadId: previous?.id ?? null,
+        sent: previous?.offset ?? 0,
         total: file.size,
         status: 'uploading',
         inFlight: true,
@@ -173,6 +218,12 @@
 
       const handle = new tus.Upload(file, {
         endpoint: '/files',
+        // Continue an earlier attempt at this file from where the server got to. Should
+        // that upload have expired meanwhile, the client starts a fresh one on its own.
+        uploadUrl: previous ? `/files/${previous.id}` : null,
+        // Resuming is matched against the server's list instead, which works from any
+        // browser; tus's own localStorage record would only pile up.
+        storeFingerprintForResuming: false,
         // The server buffers each request body in memory and caps it at 64 MiB. Without
         // an explicit chunk size tus-js-client sends the whole file in one PATCH, which
         // fails the moment anyone uploads a video.
@@ -214,6 +265,25 @@
   // The upload whose removal is awaiting confirmation. A failed one goes without asking:
   // nothing of it is stored, so there is nothing to lose.
   let removingUpload = $state<Item | null>(null)
+
+  /** Tries a failed upload again. tus asks the server how much arrived and continues
+   *  from there, so nothing already sent is sent twice. */
+  function retry(item: Item) {
+    if (item.status !== 'error' || !item.handle) return
+    item.status = 'uploading'
+    item.error = undefined
+    item.inFlight = true
+    uploading.start()
+    item.handle.start()
+  }
+
+  // A dropped connection fails uploads once tus's own retries run out; when the browser
+  // says it is back online, carry on without waiting for a click.
+  $effect(() => {
+    const onOnline = () => items.filter((i) => i.status === 'error').forEach(retry)
+    window.addEventListener('online', onOnline)
+    return () => window.removeEventListener('online', onOnline)
+  })
 
   function askRemove(item: Item) {
     if (item.status === 'error') void remove(item)
@@ -459,6 +529,31 @@
   </label>
 </div>
 
+{#if unfinished.length}
+  <section class="mt-6 rounded-lg border border-ink-700 bg-ink-900 px-3 py-2.5 text-sm">
+    <p class="text-ink-300">
+      {unfinished.length === 1 ? 'An upload' : 'Some uploads'} stopped part-way. Choose the same
+      file again to continue from where it stopped.
+    </p>
+    <ul class="mt-2 space-y-1.5">
+      {#each unfinished as upload (upload.id)}
+        <li class="flex items-center justify-between gap-3 text-xs">
+          <span class="tnum min-w-0 truncate text-ink-300">
+            {upload.filename}
+            <span class="text-ink-500">
+              · {Math.floor((upload.offset / Math.max(1, upload.size)) * 100)}% of {bytes(upload.size)} ·
+              kept for {until(upload.expires_at)}
+            </span>
+          </span>
+          <button class="shrink-0 text-ink-500 hover:text-red-400" onclick={() => (discarding = upload)}>
+            Discard
+          </button>
+        </li>
+      {/each}
+    </ul>
+  </section>
+{/if}
+
 {#if items.length}
   {#if Number.isFinite(earliestExpiry)}
     <p class="mt-6 rounded-lg border border-accent/40 bg-accent/5 px-3 py-2 text-sm text-ink-300">
@@ -480,6 +575,11 @@
               {Math.floor((item.sent / Math.max(1, item.total)) * 100)}%
             {/if}
           </span>
+          {#if item.status === 'error' && item.handle}
+            <button class="shrink-0 text-xs text-accent hover:text-accent-dim" onclick={() => retry(item)}>
+              Retry
+            </button>
+          {/if}
           <button class="shrink-0 text-xs text-ink-500 hover:text-ink-300" onclick={() => askRemove(item)}>
             Remove
           </button>
@@ -822,5 +922,17 @@
     danger
     onConfirm={() => remove(item)}
     onCancel={() => (removingUpload = null)}
+  />
+{/if}
+
+{#if discarding}
+  {@const upload = discarding}
+  <Confirm
+    title={`Discard “${upload.filename}”?`}
+    body={`What has arrived so far (${bytes(upload.offset)} of ${bytes(upload.size)}) is deleted. To send this file you would start again from the beginning.`}
+    confirmLabel="Discard"
+    danger
+    onConfirm={() => discard(upload)}
+    onCancel={() => (discarding = null)}
   />
 {/if}

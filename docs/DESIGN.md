@@ -60,9 +60,21 @@ client sends the whole file in one `PATCH`, which fails on the first large video
 closing the tab between them used to strand the files: on disk, counted against you, and
 reachable by nothing until they expired. `GET /api/uploads` lists your finished uploads not
 yet in a link, and the Uploads page offers them again whenever it comes into view — from a
-new tab or another device — with a line saying when they will be deleted. Unfinished
-uploads are not offered: resuming one needs the file itself, which only the browser that
-picked it has.
+new tab or another device — with a line saying when they will be deleted.
+
+**Unfinished ones continue.** The same endpoint lists uploads that stopped part-way, with
+how far each got; the page shows them, and choosing the same file again continues from
+the server's offset instead of starting over — `uploadUrl` handed to tus-js-client, which
+falls back to a fresh upload by itself if that one has since expired. The match is name,
+size and last-modified time (to the second, as the server stores it): nothing short of
+reading the file can do better, and requiring the time whenever the server has one keeps
+a different file of the same name and size from being stitched onto the wrong upload.
+Matching against the server's list rather than tus's own localStorage fingerprints makes
+it work from any browser, and that store is switched off so it does not pile up. A
+browser cannot reopen a file by itself, which is why the file must be chosen again.
+Separately, an upload that fails in the open tab — tus's own retries exhausted — gets a
+Retry, and retries itself when the browser reports being back online; either way tus asks
+the server for the offset first, so nothing already sent is sent twice.
 
 That same limit is why leaving mid-upload asks first. While any upload is in flight, the
 page holds a `beforeunload` handler, so reload, close and navigating away get the
@@ -497,7 +509,7 @@ name, the off-site result and disk use.
 | `HEAD` | `/files/{id}` | `Upload-Offset` — where to resume |
 | `PATCH` | `/files/{id}` | append at offset; on completion → blob |
 | `DELETE` | `/files/{id}` | tus termination — discard now, not at TTL |
-| `GET` | `/api/uploads` | your finished uploads not yet made into a link |
+| `GET` | `/api/uploads` | your finished uploads not yet made into a link, and unfinished ones with their offset |
 | `POST` | `/api/shares` | bundle completed uploads into a link |
 | `GET` | `/api/shares` | list your own |
 | `DELETE` | `/api/shares/{token}` | revoke early |
