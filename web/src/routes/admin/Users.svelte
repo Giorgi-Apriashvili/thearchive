@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { api } from '../../lib/api'
+  import { api, type AccountStorage } from '../../lib/api'
   import { bytes, shortDate } from '../../lib/format'
   import { router, link } from '../../lib/router.svelte'
 
@@ -12,6 +12,7 @@
     share_count: number
     bytes: number
     invited_by?: string
+    storage: AccountStorage
   }
 
   let users = $state<AdminUser[]>([])
@@ -63,7 +64,9 @@
           </div>
           <div class="tnum shrink-0 text-right text-xs text-ink-500">
             <p>{user.share_count} share{user.share_count === 1 ? '' : 's'}</p>
-            <p class="mt-0.5">{bytes(user.bytes)}</p>
+            <p class="mt-0.5" title={user.storage.custom ? 'Limit set for this account' : "The role's limit"}>
+              {bytes(user.storage.used)} of {user.storage.limit === null ? 'no limit' : bytes(user.storage.limit)}{user.storage.custom ? ' *' : ''}
+            </p>
           </div>
         </a>
       </li>

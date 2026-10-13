@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { api, ApiError } from '../../lib/api'
+  import { api, ApiError, type AccountStorage } from '../../lib/api'
   import { bytes, shortDate, until } from '../../lib/format'
   import { router, link } from '../../lib/router.svelte'
   import VisibilityToggle from '../../lib/VisibilityToggle.svelte'
@@ -32,6 +32,7 @@
     invited_by?: string
     shares: UserShare[]
     invited: string[]
+    storage: AccountStorage
   }
 
   let user = $state<Detail | null>(null)
@@ -76,6 +77,15 @@
   }
 
   const roles = ['user', 'privileged', 'admin'] as const
+
+  // Storage limit, entered in GB. null returns the account to its role's limit; -1 lifts it.
+  let limitGb = $state('')
+  const roleLimits: Record<string, string> = { user: '20 GB', privileged: '100 GB', admin: 'no limit' }
+
+  async function setLimit(bytesValue: number | null) {
+    await act('limit', { bytes: bytesValue })
+    limitGb = ''
+  }
 
   let renaming = $state('')
   let confirmingRename = $state(false)
@@ -196,6 +206,49 @@
         >{role}</button>
       {/each}
     </div>
+  </section>
+
+  <section class="mt-4 rounded-xl border border-ink-800 p-4">
+    <h2 class="text-sm font-medium text-ink-300">Storage</h2>
+    <p class="tnum mt-1 text-xs text-ink-500">
+      Using {bytes(user.storage.used)} of
+      {user.storage.limit === null ? 'no limit' : bytes(user.storage.limit)}
+      — {user.storage.custom ? 'set for this account' : `the ${user.role} role's limit`}.
+      {#if user.storage.limit !== null && user.storage.used > user.storage.limit}
+        <span class="text-red-300">Over it: new uploads are refused until they are back under.</span>
+      {/if}
+    </p>
+    <form
+      class="mt-3 flex flex-wrap items-center gap-2 text-xs"
+      onsubmit={(e) => {
+        e.preventDefault()
+        const gb = Number(limitGb)
+        if (limitGb.trim() && Number.isFinite(gb) && gb >= 0) void setLimit(Math.round(gb * 1024 ** 3))
+      }}
+    >
+      <input
+        bind:value={limitGb}
+        inputmode="decimal"
+        placeholder="GB"
+        class="w-20 rounded-lg border border-ink-700 bg-ink-900 px-2 py-1 outline-none focus:border-accent"
+      />
+      <button disabled={busy !== '' || !limitGb.trim()} class="rounded-lg border border-ink-700 px-2.5 py-1 hover:border-ink-500 disabled:opacity-40">
+        Set limit
+      </button>
+      {#if user.storage.limit !== null}
+        <button type="button" disabled={busy !== ''} onclick={() => setLimit(-1)} class="rounded-lg border border-ink-700 px-2.5 py-1 hover:border-ink-500 disabled:opacity-40">
+          No limit
+        </button>
+      {/if}
+      {#if user.storage.custom}
+        <button type="button" disabled={busy !== ''} onclick={() => setLimit(null)} class="rounded-lg border border-ink-700 px-2.5 py-1 hover:border-ink-500 disabled:opacity-40">
+          Use the role's ({roleLimits[user.role]})
+        </button>
+      {/if}
+    </form>
+    <p class="mt-2 text-xs text-ink-500">
+      Lowering a limit deletes nothing; it only stops new uploads until they are under it.
+    </p>
   </section>
 
   <section class="mt-4 grid gap-3 sm:grid-cols-2">

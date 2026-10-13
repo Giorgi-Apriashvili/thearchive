@@ -7,6 +7,7 @@
 #include "auth.h"
 #include "db.h"
 #include "httputil.h"
+#include "quota.h"
 #include "thumbnail.h"
 
 namespace archive::storage {
@@ -102,6 +103,13 @@ void registerStorageRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
                     out["my_shares"] = static_cast<Json::Int64>(mine.columnInt(0));
                     out["my_bytes"] = static_cast<Json::Int64>(mine.columnInt(1));
                 }
+                // Your own usage against your limit — what the upload check counts, which
+                // is not my_bytes above: that sums files per link, this counts each once
+                // and includes uploads not yet in a link.
+                const quota::Limit limit = quota::limitFor(db, user.id);
+                out["my_usage"] = static_cast<Json::Int64>(quota::usage(db, user.id));
+                out["my_limit"] = limit.bytes ? Json::Value{static_cast<Json::Int64>(*limit.bytes)}
+                                              : Json::Value{};
 
                 // Free space is for the whole filesystem the data directory sits on, and
                 // is shared with everything else on that partition. `available` rather

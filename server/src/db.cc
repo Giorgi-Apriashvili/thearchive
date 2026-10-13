@@ -376,7 +376,15 @@ CREATE INDEX idx_activity_at ON activity(at);
 CREATE INDEX idx_activity_user ON activity(user_id, id);
 )SQL";
 
-constexpr std::array<Migration, 17> kMigrations{{
+// Storage limits (quota.h). users.quota_bytes, a flat 50 GiB from the first schema, was
+// never enforced; it stays only because SQLite cannot drop a column cheaply, and nothing
+// reads it. storage_limit replaces it: NULL follows the account's role, -1 is no limit,
+// anything else is a limit in bytes set for that account by an administrator.
+constexpr const char* kSchemaV18 = R"SQL(
+ALTER TABLE users ADD COLUMN storage_limit INTEGER;
+)SQL";
+
+constexpr std::array<Migration, 18> kMigrations{{
     {1, kSchemaV1},
     {2, kSchemaV2},
     {3, kSchemaV3},
@@ -394,6 +402,7 @@ constexpr std::array<Migration, 17> kMigrations{{
     {15, kSchemaV15},
     {16, kSchemaV16},
     {17, kSchemaV17},
+    {18, kSchemaV18},
 }};
 
 }  // namespace

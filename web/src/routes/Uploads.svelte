@@ -47,6 +47,8 @@
     status: 'uploading' | 'done' | 'error'
     error?: string
     handle?: tus.Upload
+    /** Refused for want of space: retrying would only be refused again. */
+    overLimit?: boolean
     /** Counted in `uploading` until it finishes, fails or is removed — exactly once. */
     inFlight?: boolean
     /** Set on a file uploaded earlier — in a tab since closed, or on another device — and
@@ -250,10 +252,22 @@
           item.sent = item.total
           item.status = 'done'
           settle(item)
+          void loadShares() // what you are using has changed
         },
         onError: (err) => {
           item.status = 'error'
           item.error = err.message
+          // Over the storage limit: show the server's own sentence, which says how much
+          // is in use, rather than tus's account of the HTTP exchange.
+          const response = (err as tus.DetailedError).originalResponse
+          if (response?.getStatus() === 413) {
+            item.overLimit = true
+            try {
+              item.error = JSON.parse(response.getBody()).error ?? item.error
+            } catch {
+              item.error = 'not enough space left under your storage limit'
+            }
+          }
           settle(item)
         },
       })
@@ -487,6 +501,33 @@
         · {bytes(storage.incoming_bytes)} uploading
       {/if}
     </p>
+
+    {#if storage?.my_usage !== undefined}
+      <div class="mt-3 border-t border-ink-800 pt-3">
+        <div class="flex items-baseline justify-between text-xs">
+          <span class="text-ink-300">Your space</span>
+          <span class="tnum text-ink-500">
+            {#if storage.my_limit}
+              {bytes(storage.my_usage)} of {bytes(storage.my_limit)}
+            {:else}
+              {bytes(storage.my_usage)} · no limit
+            {/if}
+          </span>
+        </div>
+        {#if storage.my_limit}
+          <div class="mt-2 h-1.5 overflow-hidden rounded bg-ink-800">
+            <div
+              class="h-full {storage.my_usage / storage.my_limit > 0.9 ? 'bg-red-400' : 'bg-accent'}"
+              style="width: {Math.min(100, (storage.my_usage / storage.my_limit) * 100)}%"
+            ></div>
+          </div>
+          <p class="mt-2 text-xs text-ink-500">
+            Each file counts once, however many of your links hold it. Links that expire or
+            are removed give their space back.
+          </p>
+        {/if}
+      </div>
+    {/if}
   </section>
 {/if}
 
@@ -575,7 +616,7 @@
               {Math.floor((item.sent / Math.max(1, item.total)) * 100)}%
             {/if}
           </span>
-          {#if item.status === 'error' && item.handle}
+          {#if item.status === 'error' && item.handle && !item.overLimit}
             <button class="shrink-0 text-xs text-accent hover:text-accent-dim" onclick={() => retry(item)}>
               Retry
             </button>

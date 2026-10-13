@@ -8,6 +8,7 @@
 
 #include "activity.h"
 #include "httputil.h"
+#include "quota.h"
 #include "shares.h"
 #include "storage.h"
 
@@ -66,6 +67,16 @@ constexpr const char* kUserSelect =
     "LEFT JOIN invites i ON i.used_by = u.id "
     "LEFT JOIN users inv ON inv.id = i.created_by ";
 
+// How much an account keeps, and its limit: null for none.
+Json::Value storageJson(Database& db, std::int64_t userId) {
+    const quota::Limit limit = quota::limitFor(db, userId);
+    Json::Value out;
+    out["used"] = static_cast<Json::Int64>(quota::usage(db, userId));
+    out["limit"] = limit.bytes ? Json::Value{static_cast<Json::Int64>(*limit.bytes)} : Json::Value{};
+    out["custom"] = limit.custom;
+    return out;
+}
+
 // Labels for the activity log: who or what an action was about, by name rather than id,
 // and never by a link's token — a token in a log would be a way into the link.
 std::string userLabel(Database& db, std::int64_t id) {
@@ -104,7 +115,9 @@ void registerAdminRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
                                        "GROUP BY u.id ORDER BY u.created_at");
                 stmt.bind(1, nowSeconds());
                 while (stmt.step()) {
-                    out.append(userRow(stmt));
+                    Json::Value row = userRow(stmt);
+                    row["storage"] = storageJson(db, stmt.columnInt(0));
+                    out.append(row);
                 }
                 return drogon::HttpResponse::newHttpJsonResponse(out);
             }));
@@ -149,6 +162,7 @@ void registerAdminRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
                         throw HttpError{404, "no such user"};
                     }
                     out = userRow(stmt);
+                    out["storage"] = storageJson(db, userId);
                 }
 
                 Json::Value shares{Json::arrayValue};
@@ -315,6 +329,44 @@ void registerAdminRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
                 Json::Value out;
                 out["username"] = now;
                 return drogon::HttpResponse::newHttpJsonResponse(out);
+            }));
+        },
+        {drogon::Post});
+
+    // {bytes: n} sets a limit for this account; {bytes: null} returns it to its role's
+    // default; {bytes: -1} lifts it. Lowering a limit below what someone already keeps
+    // deletes nothing: it only stops new uploads until they are back under it.
+    app.registerHandler(
+        "/api/admin/users/{id}/limit",
+        [&db, &auth](const drogon::HttpRequestPtr& req,
+                     std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                     const std::string& id) {
+            callback(guarded([&] {
+                const User actor = requireAdmin(req, auth);
+                const std::int64_t userId = parseId(id);
+                std::shared_ptr<Json::Value> holder;
+                const Json::Value& json = requireJson(req, holder);
+                if (!json.isMember("bytes")) {
+                    throw HttpError{400, "bytes is required: a number, -1 for no limit, or null"};
+                }
+                const Json::Value& bytes = json["bytes"];
+                auto stmt = db.prepare("UPDATE users SET storage_limit = ? WHERE id = ?");
+                std::string described;
+                if (bytes.isNull()) {
+                    stmt.bindNull(1);
+                    described = "role default";
+                } else if (bytes.isIntegral() && bytes.asInt64() >= -1) {
+                    stmt.bind(1, bytes.asInt64());
+                    described = bytes.asInt64() < 0 ? "no limit" : quota::human(bytes.asInt64());
+                } else {
+                    throw HttpError{400, "bytes must be a whole number of bytes, -1, or null"};
+                }
+                stmt.bind(2, userId).run();
+                if (db.changes() == 0) {
+                    throw HttpError{404, "no such user"};
+                }
+                activity::record(req, actor, "admin.limit", userLabel(db, userId) + ": " + described);
+                return drogon::HttpResponse::newHttpJsonResponse(storageJson(db, userId));
             }));
         },
         {drogon::Post});

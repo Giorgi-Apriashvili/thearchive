@@ -332,6 +332,30 @@ const PASS = 'correct-horse-battery'
     if (shown.some((t) => t === 'Signed in')) throw new Error('the Links filter still shows sign-ins')
   })
 
+  await step('storage limits: your space, an admin sets one, an upload over it is refused', async () => {
+    await page.goto('/')
+    await page.getByText('Your space').waitFor()
+    await page.getByText(/· no limit/).waitFor() // alice is an administrator
+    const users = await (await page.request.get('/api/admin/users')).json()
+    const bob = users.find((u) => u.username === 'bob')
+    await page.goto(`/admin/users/${bob.id}`)
+    const section = page.locator('section', { hasText: 'Storage' }).filter({ has: page.getByPlaceholder('GB') })
+    await section.getByPlaceholder('GB').fill('0.0001')
+    await section.getByRole('button', { name: 'Set limit' }).click()
+    await section.getByText(/set for this account/).waitFor()
+    await page.request.post('/api/auth/login', { data: { username: 'bob', password: PASS } })
+    try {
+      await page.goto('/')
+      await page.setInputFiles('input[type=file]', PHOTO)
+      await page.getByText(/this would take you over your \d+ KB storage limit/).waitFor()
+      if (await page.getByRole('button', { name: 'Retry', exact: true }).count())
+        throw new Error('offered Retry for an upload refused for space')
+    } finally {
+      await page.request.post('/api/auth/login', { data: { username: 'alice', password: PASS } })
+      await page.request.post(`/api/admin/users/${bob.id}/limit`, { data: { bytes: null } })
+    }
+  })
+
   await step('control panel: a user', async () => {
     await page.goto('/admin/users/1')
     await page.getByText('Reset password').first().waitFor()

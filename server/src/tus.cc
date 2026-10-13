@@ -17,6 +17,7 @@
 #include "crypto.h"
 #include "httputil.h"
 #include "mimetype.h"
+#include "quota.h"
 #include "storage.h"
 #include "thumbnail.h"
 
@@ -342,6 +343,9 @@ void registerUploadRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
                 if (length > maxUploadBytes()) {
                     throw HttpError{413, "upload exceeds the maximum permitted size"};
                 }
+                // Refused before anything is sent: the declared length is all it takes to
+                // know a file will not fit. See quota.h for what counts.
+                quota::requireRoom(db, user, length);
 
                 const auto metadata = parseMetadata(req->getHeader("Upload-Metadata"));
                 const std::string filename =

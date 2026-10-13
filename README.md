@@ -96,6 +96,7 @@ Each drives a real server over HTTP; none needs a fixture or a mock.
 ./server/tests/profiles.sh # profiles, pictures and what a picture keeps of its original
 ./server/tests/sending.sh  # links attached in chat and sent to someone's inbox
 ./server/tests/activity.sh # the activity log: what it records, what it never does, who reads it
+./server/tests/quota.sh    # storage limits: role defaults, per-account limits, what counts
 ```
 
 After any **frontend** change, also run the browser check before deploying:

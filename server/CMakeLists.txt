@@ -105,6 +105,7 @@ add_executable(thearchive
     src/text.cc
     src/activity.cc
     src/inbox.cc
+    src/quota.cc
     src/notifications.cc
 )
 

@@ -542,6 +542,7 @@ the notice states the period that is enforced. Recording never fails a request.
 | `PATCH` | `/api/shares/{token}` | `{visibility?, expires_days?}` — your own; expiry only while it works |
 | `GET` | `/api/shares/{token}/downloads` | who downloaded your link — members by name, others only counted; owner only |
 | `POST` | `/api/shares/{token}/files` | `{uploads: [id…]}` — add finished uploads to your own working link |
+| `POST` | `/api/admin/users/{id}/limit` | `{bytes}` — a storage limit for this account; `null` = the role's, `-1` = none |
 | `DELETE` | `/api/shares/{token}/files/{id}` | remove one file; revokes the share if it was the last |
 | `GET` | `/api/storage` | usage and free space |
 | `GET` | `/api/shares/{token}` | share metadata (public) |
@@ -700,6 +701,26 @@ disabled user would otherwise leave an already-issued cookie working until it ex
 Disabling is the reversible option and deletion is not — deleting cascades to shares and
 sessions, and the user's blobs lose their last reference and leave on the next sweep. The
 UI requires the username typed to confirm it.
+
+### Storage limits
+
+Each role has a default — `user` 20 GB, `privileged` 100 GB, `admin` none — and an
+administrator can set any one account apart (`users.storage_limit`: NULL follows the
+role, -1 is no limit, otherwise bytes; `POST /api/admin/users/{id}/limit`). Following the
+role by default means a promotion raises the limit with no further step; a limit set for
+someone survives a change of role, since it was a decision about that person.
+`users.quota_bytes`, a flat 50 GiB from the first schema, was never enforced and is not
+read.
+
+What counts (`quota::usage`) is what someone keeps: each distinct file in their links that
+still work and in their uploads not yet in a link, once however many of their links hold
+it, and an unfinished upload at its full declared size, since that much is spoken for.
+The check is at upload creation, against `Upload-Length`, so a file that cannot fit is
+refused with a 413 — naming the limit and what is in use — before a byte is sent, not
+after an hour of sending; the page shows that sentence instead of tus's error and offers
+no Retry. Lowering a limit below someone's use deletes nothing: it stops new uploads until
+expiring links bring them back under. The Uploads page shows "Your space" against the
+limit, and the control panel shows everyone's.
 
 ## Previews
 
@@ -1022,7 +1043,6 @@ the part to have someone qualified read.
 
 ## Deliberately deferred
 
-- **Per-user quota.** `users.quota_bytes` exists and nothing enforces it.
 - **A general request-rate limit.** Password checks are limited; nothing else is. The
   real exposure is bandwidth rather than guessing: anyone holding a public link can
   download it, or its streamed ZIP, as often as they like.

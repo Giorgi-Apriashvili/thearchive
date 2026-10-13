@@ -116,6 +116,14 @@ export interface ShareSummary {
   total_bytes: number
 }
 
+/** An account's storage as the control panel sees it. `limit` null is no limit; `custom`
+ *  means set for this account rather than following its role. */
+export interface AccountStorage {
+  used: number
+  limit: number | null
+  custom: boolean
+}
+
 export interface StorageInfo {
   stored_bytes: number
   blob_count: number
@@ -126,6 +134,10 @@ export interface StorageInfo {
   incoming_bytes: number
   my_shares?: number
   my_bytes?: number
+  /** What counts against your storage limit: each file once, unfinished uploads in full. */
+  my_usage?: number
+  /** Your limit in bytes; null when you have none. */
+  my_limit?: number | null
   /** Whole filesystem, shared with anything else on that partition — not a quota. */
   disk_total?: number
   disk_available?: number
