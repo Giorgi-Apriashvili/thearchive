@@ -450,6 +450,68 @@ std::int64_t requireOwnLiveShare(Database& db, const std::string& token, std::in
     return stmt.columnInt(0);
 }
 
+namespace {
+
+// Moves finished uploads into a share: a share_files row each, a reference on each blob,
+// and the upload row consumed. The caller's transaction makes it all or nothing; each
+// upload must be the caller's own and finished. Returns the bytes added.
+std::int64_t attachUploads(Database& db, std::int64_t shareId, std::int64_t userId,
+                           const Json::Value& uploads, std::int64_t now) {
+    std::int64_t totalBytes = 0;
+    for (const auto& entry : uploads) {
+        if (!entry.isString()) {
+            throw HttpError{400, "upload ids must be strings"};
+        }
+        const std::string uploadId = entry.asString();
+
+        auto find = db.prepare(
+            "SELECT blob_sha256, COALESCE(filename, 'download'), "
+            "       content_type, total_size, client_mtime, relative_path "
+            "FROM uploads WHERE id = ? AND owner_id = ? "
+            "AND completed_at IS NOT NULL");
+        find.bind(1, uploadId).bind(2, userId);
+        if (!find.step()) {
+            throw HttpError{400, "upload '" + uploadId +
+                                     "' is unknown, unfinished, or not yours"};
+        }
+        const std::string hash = find.columnText(0);
+        const std::string filename = find.columnText(1);
+        const std::string declaredType = find.columnText(2);
+        const std::int64_t size = find.columnInt(3);
+        const bool hasMtime = !find.columnIsNull(4);
+        const std::int64_t mtime = find.columnInt(4);
+        const std::string relativePath = find.columnText(5);
+        totalBytes += size;
+
+        auto insertFile = db.prepare(
+            "INSERT INTO share_files (share_id, blob_sha256, filename, "
+            "content_type, size, uploaded_by, client_mtime, relative_path) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+        insertFile.bind(1, shareId).bind(2, hash).bind(3, filename);
+        declaredType.empty() ? insertFile.bindNull(4)
+                             : insertFile.bind(4, declaredType);
+        insertFile.bind(5, size).bind(6, userId);
+        hasMtime ? insertFile.bind(7, mtime) : insertFile.bindNull(7);
+        relativePath.empty() ? insertFile.bindNull(8)
+                             : insertFile.bind(8, relativePath);
+        insertFile.run();
+
+        auto bump = db.prepare(
+            "UPDATE blobs SET refcount = refcount + 1, last_referenced_at = ? "
+            "WHERE sha256 = ?");
+        bump.bind(1, now).bind(2, hash).run();
+
+        // Consuming the upload row makes a double-reference impossible: the
+        // same id cannot be spent on two shares and inflate the refcount.
+        auto consume = db.prepare("DELETE FROM uploads WHERE id = ?");
+        consume.bind(1, uploadId).run();
+    }
+
+    return totalBytes;
+}
+
+}  // namespace
+
 void registerShareRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
     auto& app = drogon::app();
 
@@ -542,55 +604,8 @@ void registerShareRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
                 insertShare.run();
                 const std::int64_t shareId = db.lastInsertId();
 
-                std::int64_t totalBytes = 0;
-                for (const auto& entry : body["uploads"]) {
-                    if (!entry.isString()) {
-                        throw HttpError{400, "upload ids must be strings"};
-                    }
-                    const std::string uploadId = entry.asString();
-
-                    auto find = db.prepare(
-                        "SELECT blob_sha256, COALESCE(filename, 'download'), "
-                        "       content_type, total_size, client_mtime, relative_path "
-                        "FROM uploads WHERE id = ? AND owner_id = ? "
-                        "AND completed_at IS NOT NULL");
-                    find.bind(1, uploadId).bind(2, user.id);
-                    if (!find.step()) {
-                        throw HttpError{400, "upload '" + uploadId +
-                                                 "' is unknown, unfinished, or not yours"};
-                    }
-                    const std::string hash = find.columnText(0);
-                    const std::string filename = find.columnText(1);
-                    const std::string declaredType = find.columnText(2);
-                    const std::int64_t size = find.columnInt(3);
-                    const bool hasMtime = !find.columnIsNull(4);
-                    const std::int64_t mtime = find.columnInt(4);
-                    const std::string relativePath = find.columnText(5);
-                    totalBytes += size;
-
-                    auto insertFile = db.prepare(
-                        "INSERT INTO share_files (share_id, blob_sha256, filename, "
-                        "content_type, size, uploaded_by, client_mtime, relative_path) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
-                    insertFile.bind(1, shareId).bind(2, hash).bind(3, filename);
-                    declaredType.empty() ? insertFile.bindNull(4)
-                                         : insertFile.bind(4, declaredType);
-                    insertFile.bind(5, size).bind(6, user.id);
-                    hasMtime ? insertFile.bind(7, mtime) : insertFile.bindNull(7);
-                    relativePath.empty() ? insertFile.bindNull(8)
-                                         : insertFile.bind(8, relativePath);
-                    insertFile.run();
-
-                    auto bump = db.prepare(
-                        "UPDATE blobs SET refcount = refcount + 1, last_referenced_at = ? "
-                        "WHERE sha256 = ?");
-                    bump.bind(1, now).bind(2, hash).run();
-
-                    // Consuming the upload row makes a double-reference impossible: the
-                    // same id cannot be spent on two shares and inflate the refcount.
-                    auto consume = db.prepare("DELETE FROM uploads WHERE id = ?");
-                    consume.bind(1, uploadId).run();
-                }
+                const std::int64_t totalBytes =
+                    attachUploads(db, shareId, user.id, body["uploads"], now);
 
                 tx.commit();
 
@@ -739,6 +754,62 @@ void registerShareRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
         {drogon::Get, drogon::Delete, drogon::Patch});
 
     // ---- remove one file from a share -------------------------------------------
+    // ---- add files to a link you already made ----------------------------------------
+    // Your own link, while it still works: finished uploads go in exactly as they do at
+    // creation, so the link's address, settings and everyone it was sent to stay as they
+    // are and simply see more files.
+    app.registerHandler(
+        "/api/shares/{token}/files",
+        [&db, &auth](const drogon::HttpRequestPtr& req,
+                     std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                     const std::string& token) {
+            callback(guarded([&] {
+                const User user = requireUser(req, auth);
+                std::shared_ptr<Json::Value> holder;
+                const Json::Value& body = requireJson(req, holder);
+                if (!body.isMember("uploads") || !body["uploads"].isArray() ||
+                    body["uploads"].empty()) {
+                    throw HttpError{400, "uploads must be a non-empty array of upload ids"};
+                }
+                const std::int64_t shareId = requireOwnLiveShare(db, token, user.id);
+
+                // IMMEDIATE, so the sweep cannot release the share between this check and
+                // the files going in: files added to a released share would hold blob
+                // references that nothing ever gives back.
+                Transaction tx{db};
+                auto state = db.prepare(
+                    "SELECT released_at IS NULL AND deleted_at IS NULL, "
+                    "       (SELECT COUNT(*) FROM share_files WHERE share_id = ?1) "
+                    "FROM shares WHERE id = ?1");
+                state.bind(1, shareId);
+                state.step();
+                if (state.columnInt(0) == 0) {
+                    throw HttpError{409, "that link has expired, been revoked or been used up"};
+                }
+                if (state.columnInt(1) + static_cast<std::int64_t>(body["uploads"].size()) >
+                    kMaxFilesPerShare) {
+                    throw HttpError{400, "a link holds at most " +
+                                             std::to_string(kMaxFilesPerShare) + " files"};
+                }
+                const std::int64_t added =
+                    attachUploads(db, shareId, user.id, body["uploads"], nowSeconds());
+                tx.commit();
+
+                auto totals = db.prepare(
+                    "SELECT COUNT(*), COALESCE(SUM(size), 0) FROM share_files WHERE share_id = ?");
+                totals.bind(1, shareId);
+                totals.step();
+                Json::Value out;
+                out["added"] = static_cast<Json::Int64>(body["uploads"].size());
+                out["file_count"] = static_cast<Json::Int64>(totals.columnInt(0));
+                out["total_bytes"] = static_cast<Json::Int64>(totals.columnInt(1));
+                LOG_INFO << "share " << shareId << ": " << body["uploads"].size()
+                         << " file(s) added, " << added << " bytes, by user " << user.id;
+                return drogon::HttpResponse::newHttpJsonResponse(out);
+            }));
+        },
+        {drogon::Post});
+
     app.registerHandler(
         "/api/shares/{token}/files/{fileId}",
         [&db, &auth, dataDir](const drogon::HttpRequestPtr& req,

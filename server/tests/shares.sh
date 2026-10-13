@@ -611,6 +611,48 @@ curl -s -o /dev/null -b "$JAR" -X POST "$BASE/api/shares" -H 'Content-Type: appl
 check "once made into a link it is no longer offered" "$(pending "$JAR" "len(json.load(sys.stdin)['uploads'])")" "0"
 curl -s -o /dev/null -b "$JAR" -X DELETE "$BASE$HALF"
 
+echo "=== adding files to a link ==="
+addf() { curl -s -o /dev/null -w '%{http_code}' -b "$1" -X POST "$BASE/api/shares/$2/files" \
+         -H 'Content-Type: application/json' -d "$3"; }
+files_of() { curl -s -b "$JAR" "$BASE/api/shares/$1" | python3 -c "import sys,json;print(','.join(f['filename'] for f in json.load(sys.stdin)['files']))"; }
+for n in first second third fourth; do head -c 32768 /dev/urandom > "$WORK/$n.bin"; done
+ADD=$(curl -s -b "$JAR" -X POST "$BASE/api/shares" -H 'Content-Type: application/json' \
+    -d "{\"uploads\":[\"$(upload "$WORK/first.bin")\"],\"title\":\"Growing\",\"public\":true}" | jget token)
+A2=$(upload "$WORK/second.bin"); A3=$(upload "$WORK/third.bin")
+resp=$(curl -s -b "$JAR" -X POST "$BASE/api/shares/$ADD/files" -H 'Content-Type: application/json' \
+    -d "{\"uploads\":[\"$A2\",\"$A3\"]}")
+check "two files added to a link" \
+    "$(printf '%s' "$resp" | python3 -c "import sys,json;d=json.load(sys.stdin);print(d['added'], d['file_count'], d['total_bytes'])")" \
+    "2 3 98304"
+check "the link lists all three" "$(files_of "$ADD")" "first.bin,second.bin,third.bin"
+check "the same address serves the new one" \
+    "$(curl -s "$BASE/d/$ADD/$(curl -s "$BASE/api/shares/$ADD" | jfile 2)" | sha256sum | cut -d' ' -f1)" \
+    "$(sha256sum < "$WORK/third.bin" | cut -d' ' -f1)"
+check "the uploads are spent" "$(sql "SELECT COUNT(*) FROM uploads WHERE id IN ('$A2','$A3');")" "0"
+check "and their blobs referenced once" \
+    "$(sql "SELECT refcount FROM blobs WHERE sha256='$(sha256sum < "$WORK/second.bin" | cut -d' ' -f1)';")" "1"
+check "a spent upload cannot be added again" "$(addf "$JAR" "$ADD" "{\"uploads\":[\"$A2\"]}")" "400"
+# All or nothing: one bad id refuses the lot, and the good upload is not consumed.
+A4=$(upload "$WORK/fourth.bin")
+check "one unknown upload refuses the whole request" "$(addf "$JAR" "$ADD" "{\"uploads\":[\"$A4\",\"nope\"]}")" "400"
+check "leaving the link as it was" "$(files_of "$ADD")" "first.bin,second.bin,third.bin"
+check "and the good upload unspent" "$(sql "SELECT COUNT(*) FROM uploads WHERE id='$A4';")" "1"
+check "an empty list is refused" "$(addf "$JAR" "$ADD" '{"uploads":[]}')" "400"
+check "signed out is refused" "$(addf /dev/null "$ADD" "{\"uploads\":[\"$A4\"]}")" "401"
+INVA=$(curl -s -b "$JAR" -X POST "$BASE/api/invites" | jget code)
+ADDER=$(mktemp)
+curl -s -o /dev/null -c "$ADDER" -X POST "$BASE/api/auth/register" -H 'Content-Type: application/json' \
+    -d "{\"invite\":\"$INVA\",\"username\":\"adder\",\"password\":\"correct-horse-battery\"}"
+head -c 1024 /dev/urandom > "$WORK/theirs.bin"
+THEIRS=$(JAR="$ADDER" upload "$WORK/theirs.bin")
+check "another member cannot add to your link" "$(addf "$ADDER" "$ADD" "{\"uploads\":[\"$THEIRS\"]}")" "404"
+check "nor you add their upload to yours" "$(addf "$JAR" "$ADD" "{\"uploads\":[\"$THEIRS\"]}")" "400"
+rm -f "$ADDER"
+sql "UPDATE shares SET expires_at = strftime('%s','now') - 1 WHERE token='$ADD';"
+check "an expired link takes no more" "$(addf "$JAR" "$ADD" "{\"uploads\":[\"$A4\"]}")" "409"
+check "and the upload stays yours to use" "$(sql "SELECT COUNT(*) FROM uploads WHERE id='$A4';")" "1"
+curl -s -o /dev/null -b "$JAR" -X DELETE "$BASE/files/$A4"
+
 echo "=== tus termination ==="
 head -c 131072 /dev/urandom > "$WORK/cancel.bin"
 CANCEL=$(sha256sum "$WORK/cancel.bin" | cut -d' ' -f1)

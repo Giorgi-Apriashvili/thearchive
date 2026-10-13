@@ -371,6 +371,27 @@ const PASS = 'correct-horse-battery'
     await page.getByRole('button', { name: /Day trip/ }).waitFor({ state: 'detached' })
   })
 
+  await step('add files to an existing link', async () => {
+    await page.goto('/')
+    const row = page.locator('li', { hasText: 'Night out' }).filter({ has: page.getByRole('link', { name: 'Open', exact: true }) }).first()
+    const before = Number((await row.innerText()).match(/(\d+) files?/)[1])
+    await page.getByRole('button', { name: /Night out/ }).first().click()
+    const [chooser] = await Promise.all([
+      page.waitForEvent('filechooser'),
+      page.getByRole('button', { name: 'Add files', exact: true }).click(),
+    ])
+    await chooser.setFiles(PHOTO)
+    await page.getByRole('button', { name: /^Add 1 file to “Night out”/ }).click()
+    await page.getByText(/^Added 1 file to “Night out”/).waitFor()
+    await row.getByText(new RegExp(`^${before + 1} files`)).waitFor()
+    // The destination resets: the next upload is a new link again unless chosen otherwise.
+    await page.setInputFiles('input[type=file]', PHOTO)
+    await page.getByRole('button', { name: /^Create link for 1 file/ }).waitFor({ timeout: 15000 })
+    const item = page.locator('#upload-list li').first()
+    await item.getByRole('button', { name: 'Remove', exact: true }).click()
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Remove file' }).click()
+  })
+
   await step('leaving mid-upload asks first; afterwards it does not', async () => {
     await page.goto('/')
     // Hold the upload mid-transfer: its PATCH requests wait until released.

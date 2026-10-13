@@ -200,6 +200,15 @@ Orphan deletion removes the database row *before* unlinking the file. The revers
 would leave a row pointing at a missing file if the process died in between, surfacing as
 a broken download; this order can only leak a file, which is harmless and recoverable.
 
+Files can be added to a link after it is made (`POST /api/shares/{token}/files`), by its
+owner while it still works. They go in through the same `attachUploads` as at creation —
+each upload consumed, each blob referenced once, all in one transaction — so a link that
+grew is indistinguishable from one made with everything at once, and its address,
+settings and recipients stay as they were. The transaction re-checks that the sweep has
+not released the share: files attached to a released share would hold blob references
+that nothing ever gives back. Removing works per file and is already there, so a link's
+contents can be corrected in both directions without a new address.
+
 Expiry is 1–365 days, defaulting to 30. The owner can change it while the link still
 works (`PATCH /api/shares/{token}` with `expires_days`), counted from that moment as at
 creation, so it can shorten a link as well as extend it — and a link kept extended can
@@ -470,6 +479,7 @@ name, the off-site result and disk use.
 | `GET` | `/api/shares` | list your own |
 | `DELETE` | `/api/shares/{token}` | revoke early |
 | `PATCH` | `/api/shares/{token}` | `{visibility?, expires_days?}` — your own; expiry only while it works |
+| `POST` | `/api/shares/{token}/files` | `{uploads: [id…]}` — add finished uploads to your own working link |
 | `DELETE` | `/api/shares/{token}/files/{id}` | remove one file; revokes the share if it was the last |
 | `GET` | `/api/storage` | usage and free space |
 | `GET` | `/api/shares/{token}` | share metadata (public) |

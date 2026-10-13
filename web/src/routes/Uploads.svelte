@@ -65,6 +65,11 @@
   let dragging = $state(false)
   let creating = $state(false)
   let created = $state<CreatedShare | null>(null)
+  // Where the finished uploads go: a new link (null), or one of yours that still works.
+  let target = $state<string | null>(null)
+  let added = $state<{ title: string; count: number } | null>(null)
+  let fileInput = $state<HTMLInputElement | null>(null)
+  let pickedForLink = false
   let copied = $state(false)
   let error = $state('')
 
@@ -237,6 +242,47 @@
     await loadShares()
   }
 
+  // Links that can still take files: not expired, not used up. The server checks again.
+  const liveShares = $derived(
+    shares.filter(
+      (s) =>
+        s.expires_at > Date.now() / 1000 &&
+        !(s.max_downloads !== undefined && s.download_count >= s.max_downloads),
+    ),
+  )
+  const targetShare = $derived(target ? (liveShares.find((s) => s.token === target) ?? null) : null)
+
+  /** "Add files" on one of your links: that link becomes the destination, then the usual
+   *  file chooser — so the upload itself is the ordinary one, progress and all. */
+  function addFilesTo(token: string) {
+    target = token
+    pickedForLink = true
+    fileInput?.click()
+  }
+
+  async function addToShare(share: ShareSummary) {
+    error = ''
+    creating = true
+    try {
+      await api.post(`/api/shares/${share.token}/files`, { uploads: ready.map((i) => i.uploadId) })
+      added = { title: share.title || 'Untitled', count: ready.length }
+      created = null
+      items = []
+      target = null
+      await loadShares()
+      if (expanded === share.token) await loadExpanded(share.token)
+    } catch (e) {
+      error = e instanceof ApiError ? e.message : 'could not add the files'
+    } finally {
+      creating = false
+    }
+  }
+
+  function submit() {
+    if (targetShare) void addToShare(targetShare)
+    else void createShare()
+  }
+
   async function createShare() {
     error = ''
     creating = true
@@ -251,6 +297,7 @@
       if (!isPrivate) body.public = true
 
       created = await api.post<CreatedShare>('/api/shares', body)
+      added = null
       items = []
       title = ''
       password = ''
@@ -298,15 +345,19 @@
     expandedFiles = []
     expanding = true
     try {
-      // The owner is exempt from the share password, so this works even on a protected
-      // link without prompting for something they chose themselves.
-      const detail = await api.get<ShareDetail>(`/api/shares/${token}`)
-      expandedFiles = detail.files
+      await loadExpanded(token)
     } catch {
       expanded = null
     } finally {
       expanding = false
     }
+  }
+
+  async function loadExpanded(token: string) {
+    // The owner is exempt from the share password, so this works even on a protected
+    // link without prompting for something they chose themselves.
+    const detail = await api.get<ShareDetail>(`/api/shares/${token}`)
+    expandedFiles = detail.files
   }
 
   // The file whose removal is awaiting confirmation, and the link it is in.
@@ -380,6 +431,7 @@
   <label class="mt-3 inline-block cursor-pointer rounded-lg border border-ink-700 px-3 py-1.5 text-sm hover:border-ink-500">
     Choose files
     <input
+      bind:this={fileInput}
       type="file"
       multiple
       class="hidden"
@@ -387,6 +439,9 @@
         const input = e.currentTarget as HTMLInputElement
         if (input.files) enqueue(input.files)
         input.value = ''
+        // Chosen from a link further down: bring the upload list into view.
+        if (pickedForLink) document.getElementById('upload-list')?.scrollIntoView({ behavior: 'smooth' })
+        pickedForLink = false
       }}
     />
   </label>
@@ -399,7 +454,7 @@
       {until(earliestExpiry)}, or they are deleted.
     </p>
   {/if}
-  <ul class="mt-6 space-y-2">
+  <ul id="upload-list" class="mt-6 space-y-2">
     {#each items as item (item.key)}
       <li class="rounded-lg border border-ink-700 bg-ink-900 px-3 py-2">
         <div class="flex items-center justify-between gap-3 text-sm">
@@ -429,57 +484,81 @@
     {/each}
   </ul>
 
-  <div class="mt-6 grid gap-4 sm:grid-cols-2">
-    <label class="block sm:col-span-2">
-      <span class="text-xs text-ink-500">Title (optional)</span>
-      <input
-        bind:value={title}
-        placeholder="Saturday night"
-        class="mt-1 w-full rounded-lg border border-ink-700 bg-ink-900 px-3 py-2 text-sm outline-none focus:border-accent"
-      />
-    </label>
-    <label class="block">
-      <span class="text-xs text-ink-500">Expires after</span>
+  {#if liveShares.length}
+    <label class="mt-6 block">
+      <span class="text-xs text-ink-500">Put these files in</span>
       <select
-        bind:value={expiresDays}
+        bind:value={target}
         class="mt-1 w-full rounded-lg border border-ink-700 bg-ink-900 px-3 py-2 text-sm outline-none focus:border-accent"
       >
-        {#each expiryChoices as choice (choice.days)}
-          <option value={choice.days}>{choice.label}</option>
+        <option value={null}>A new link</option>
+        {#each liveShares as share (share.token)}
+          <option value={share.token}>
+            “{share.title || 'Untitled'}” · {share.file_count} file{share.file_count === 1 ? '' : 's'}
+          </option>
         {/each}
       </select>
     </label>
-    <label class="block">
-      <span class="text-xs text-ink-500">Max downloads (optional)</span>
-      <input
-        bind:value={maxDownloads}
-        inputmode="numeric"
-        placeholder="unlimited"
-        class="mt-1 w-full rounded-lg border border-ink-700 bg-ink-900 px-3 py-2 text-sm outline-none focus:border-accent"
-      />
-    </label>
-    <label class="flex cursor-pointer items-start gap-3 rounded-lg border border-ink-700 bg-ink-900 px-3 py-2.5 sm:col-span-2">
-      <input type="checkbox" bind:checked={isPrivate} class="mt-0.5 accent-[#e0a458]" />
-      <span class="text-xs">
-        <span class="block text-ink-100">Private — members only</span>
-        <span class="mt-0.5 block text-ink-500">
-          {isPrivate
-            ? 'Only people with an account here can open the link.'
-            : 'Anyone with the link can open it, account or not.'}
-        </span>
-      </span>
-    </label>
+  {/if}
 
-    <label class="block sm:col-span-2">
-      <span class="text-xs text-ink-500">Password (optional)</span>
-      <input
-        type="password"
-        bind:value={password}
-        autocomplete="new-password"
-        class="mt-1 w-full rounded-lg border border-ink-700 bg-ink-900 px-3 py-2 text-sm outline-none focus:border-accent"
-      />
-    </label>
-  </div>
+  {#if targetShare}
+    <p class="mt-3 text-xs text-ink-500">
+      They join the link as it is: its address, expiry, visibility and password stay the same,
+      and everyone who has the link sees the new files.
+    </p>
+  {:else}
+    <div class="mt-6 grid gap-4 sm:grid-cols-2">
+      <label class="block sm:col-span-2">
+        <span class="text-xs text-ink-500">Title (optional)</span>
+        <input
+          bind:value={title}
+          placeholder="Saturday night"
+          class="mt-1 w-full rounded-lg border border-ink-700 bg-ink-900 px-3 py-2 text-sm outline-none focus:border-accent"
+        />
+      </label>
+      <label class="block">
+        <span class="text-xs text-ink-500">Expires after</span>
+        <select
+          bind:value={expiresDays}
+          class="mt-1 w-full rounded-lg border border-ink-700 bg-ink-900 px-3 py-2 text-sm outline-none focus:border-accent"
+        >
+          {#each expiryChoices as choice (choice.days)}
+            <option value={choice.days}>{choice.label}</option>
+          {/each}
+        </select>
+      </label>
+      <label class="block">
+        <span class="text-xs text-ink-500">Max downloads (optional)</span>
+        <input
+          bind:value={maxDownloads}
+          inputmode="numeric"
+          placeholder="unlimited"
+          class="mt-1 w-full rounded-lg border border-ink-700 bg-ink-900 px-3 py-2 text-sm outline-none focus:border-accent"
+        />
+      </label>
+      <label class="flex cursor-pointer items-start gap-3 rounded-lg border border-ink-700 bg-ink-900 px-3 py-2.5 sm:col-span-2">
+        <input type="checkbox" bind:checked={isPrivate} class="mt-0.5 accent-[#e0a458]" />
+        <span class="text-xs">
+          <span class="block text-ink-100">Private — members only</span>
+          <span class="mt-0.5 block text-ink-500">
+            {isPrivate
+              ? 'Only people with an account here can open the link.'
+              : 'Anyone with the link can open it, account or not.'}
+          </span>
+        </span>
+      </label>
+
+      <label class="block sm:col-span-2">
+        <span class="text-xs text-ink-500">Password (optional)</span>
+        <input
+          type="password"
+          bind:value={password}
+          autocomplete="new-password"
+          class="mt-1 w-full rounded-lg border border-ink-700 bg-ink-900 px-3 py-2 text-sm outline-none focus:border-accent"
+        />
+      </label>
+    </div>
+  {/if}
 
   {#if error}
     <p class="mt-4 rounded-lg bg-red-950/60 px-3 py-2 text-sm text-red-300">{error}</p>
@@ -487,17 +566,26 @@
 
   <button
     disabled={busy || creating || ready.length === 0}
-    onclick={createShare}
+    onclick={submit}
     class="mt-4 w-full rounded-lg bg-accent px-3 py-2 text-sm font-medium text-ink-950 transition hover:bg-accent-dim disabled:opacity-40"
   >
     {#if busy}
       Uploading…
     {:else if creating}
-      Creating link…
+      {targetShare ? 'Adding…' : 'Creating link…'}
+    {:else if targetShare}
+      Add {ready.length} file{ready.length === 1 ? '' : 's'} to “{targetShare.title || 'Untitled'}” ({bytes(totalBytes)})
     {:else}
       Create link for {ready.length} file{ready.length === 1 ? '' : 's'} ({bytes(totalBytes)})
     {/if}
   </button>
+{/if}
+
+{#if added}
+  <p class="mt-6 rounded-xl border border-accent/40 bg-accent/5 px-4 py-3 text-sm text-ink-300">
+    Added {added.count} file{added.count === 1 ? '' : 's'} to “{added.title}”. Everyone who has
+    the link sees {added.count === 1 ? 'it' : 'them'} now.
+  </p>
 {/if}
 
 {#if created}
@@ -630,6 +718,12 @@
                 <p class="mt-2 text-xs text-ink-500">
                   Removing the last file removes the link.
                 </p>
+              {/if}
+              {#if liveShares.some((s) => s.token === share.token)}
+                <button
+                  class="mt-3 rounded-lg border border-ink-700 px-2.5 py-1 text-xs hover:border-ink-500"
+                  onclick={() => addFilesTo(share.token)}
+                >Add files</button>
               {/if}
               <ExpiryEditor
                 token={share.token}
