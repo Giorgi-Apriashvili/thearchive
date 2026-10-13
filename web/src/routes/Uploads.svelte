@@ -12,6 +12,7 @@
   } from '../lib/api'
   import { bytes, chatTime, expiryChoices, until } from '../lib/format'
   import { inbox } from '../lib/inbox.svelte'
+  import { uploading } from '../lib/uploading.svelte'
   import VisibilityToggle from '../lib/VisibilityToggle.svelte'
   import ExpiryEditor from '../lib/ExpiryEditor.svelte'
   import Confirm from '../lib/Confirm.svelte'
@@ -45,6 +46,8 @@
     status: 'uploading' | 'done' | 'error'
     error?: string
     handle?: tus.Upload
+    /** Counted in `uploading` until it finishes, fails or is removed — exactly once. */
+    inFlight?: boolean
     /** Set on a file uploaded earlier — in a tab since closed, or on another device — and
      *  offered again from the server. It is deleted at this time unless made into a link. */
     expiresAt?: number
@@ -157,8 +160,10 @@
         sent: 0,
         total: file.size,
         status: 'uploading',
+        inFlight: true,
       })
       const item = items[items.length - 1]
+      uploading.start()
 
       const handle = new tus.Upload(file, {
         endpoint: '/files',
@@ -187,10 +192,12 @@
           item.uploadId = handle.url?.split('/').pop() ?? null
           item.sent = item.total
           item.status = 'done'
+          settle(item)
         },
         onError: (err) => {
           item.status = 'error'
           item.error = err.message
+          settle(item)
         },
       })
       item.handle = handle
@@ -207,9 +214,16 @@
     else removingUpload = item
   }
 
+  function settle(item: Item) {
+    if (!item.inFlight) return
+    item.inFlight = false
+    uploading.end()
+  }
+
   async function remove(item: Item) {
     removingUpload = null
     item.handle?.abort()
+    settle(item)
     // Abort only stops this browser sending. Terminating tells the server to discard the
     // partial file now, rather than leaving it on disk until the upload expires.
     if (item.uploadId) {

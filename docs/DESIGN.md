@@ -64,6 +64,13 @@ new tab or another device — with a line saying when they will be deleted. Unfi
 uploads are not offered: resuming one needs the file itself, which only the browser that
 picked it has.
 
+That same limit is why leaving mid-upload asks first. While any upload is in flight, the
+page holds a `beforeunload` handler, so reload, close and navigating away get the
+browser's "Leave site?" prompt, and signing out asks too. The count lives in
+`lib/uploading.svelte.ts` and is kept by the upload callbacks themselves, since an upload
+carries on when the Uploads page is unmounted; the handler is removed once nothing is in
+flight, so it does not keep pages out of the back/forward cache the rest of the time.
+
 ## Storage layout
 
 ```

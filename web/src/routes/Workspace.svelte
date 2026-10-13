@@ -3,6 +3,7 @@
   import { chat } from '../lib/chat.svelte'
   import { inbox } from '../lib/inbox.svelte'
   import { notify } from '../lib/notify.svelte'
+  import { uploading } from '../lib/uploading.svelte'
   import { link, router } from '../lib/router.svelte'
   import Confirm from '../lib/Confirm.svelte'
   import Avatar from '../lib/Avatar.svelte'
@@ -25,6 +26,7 @@
 
   let inviteCode = $state('')
   let confirmingInvite = $state(false)
+  let confirmingSignOut = $state(false)
 
   async function makeInvite() {
     confirmingInvite = false
@@ -68,7 +70,10 @@
       <a href="/account" onclick={(e) => link(e, '/account')} class="text-ink-500 hover:text-ink-300">
         Account
       </a>
-      <button class="text-ink-500 hover:text-ink-300" onclick={signOut}>Sign out</button>
+      <button
+        class="text-ink-500 hover:text-ink-300"
+        onclick={() => (uploading.active > 0 ? (confirmingSignOut = true) : signOut())}
+      >Sign out</button>
     </div>
   </header>
 
@@ -161,5 +166,19 @@
     confirmLabel="Create invite"
     onConfirm={makeInvite}
     onCancel={() => (confirmingInvite = false)}
+  />
+{/if}
+
+{#if confirmingSignOut}
+  <Confirm
+    title="Sign out while uploading?"
+    body={`${uploading.active} upload${uploading.active === 1 ? ' is' : 's are'} still in progress and will stop. Files that already finished are kept and offered again when you sign back in; the rest would have to be uploaded again from the start.`}
+    confirmLabel="Sign out"
+    danger
+    onConfirm={() => {
+      confirmingSignOut = false
+      void signOut()
+    }}
+    onCancel={() => (confirmingSignOut = false)}
   />
 {/if}

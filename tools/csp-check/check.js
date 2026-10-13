@@ -371,6 +371,46 @@ const PASS = 'correct-horse-battery'
     await page.getByRole('button', { name: /Day trip/ }).waitFor({ state: 'detached' })
   })
 
+  await step('leaving mid-upload asks first; afterwards it does not', async () => {
+    await page.goto('/')
+    // Hold the upload mid-transfer: its PATCH requests wait until released.
+    const held = []
+    await page.route('**/files/*', (route) =>
+      route.request().method() === 'PATCH' ? held.push(route) : route.continue(),
+    )
+    await page.locator('body').click() // browsers only prompt on pages the user has touched
+    await page.setInputFiles('input[type=file]', PHOTO)
+    await page.getByText(/^\d+%$/).first().waitFor()
+
+    let prompted = null
+    page.once('dialog', (d) => {
+      prompted = d.type()
+      void d.dismiss()
+    })
+    await page.reload({ timeout: 3000 }).catch(() => {})
+    if (prompted !== 'beforeunload') throw new Error(`reload mid-upload: expected a beforeunload prompt, got ${prompted}`)
+    await page.getByText(/^\d+%$/).first().waitFor() // stayed, upload still listed
+
+    await page.getByRole('button', { name: 'Sign out' }).click()
+    const dialog = page.getByRole('alertdialog')
+    await dialog.getByText('Sign out while uploading?').waitFor()
+    await dialog.getByRole('button', { name: 'Cancel' }).click()
+
+    // Let it finish; tus retries the held request.
+    await page.unroute('**/files/*')
+    for (const route of held) await route.abort().catch(() => {})
+    await page.getByText(/Create link for \d+ file/).waitFor({ timeout: 20000 })
+    let promptedAfter = false
+    const onDialog = (d) => {
+      promptedAfter = true
+      void d.dismiss()
+    }
+    page.on('dialog', onDialog)
+    await page.reload()
+    page.off('dialog', onDialog)
+    if (promptedAfter) throw new Error('prompted on reload after the upload had finished')
+  })
+
   // The control. An inline style attribute set through the DOM is exactly what the
   // policy forbids; if this is not reported, nothing above means anything.
   await step(
