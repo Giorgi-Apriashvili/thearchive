@@ -12,6 +12,7 @@
 // which rather defeats the point. Messages poll quickly, and only while a room is open.
 
 import { api, ApiError, type ChatMessage, type ChatRoom, type RoomMembers } from './api'
+import { notify } from './notify.svelte'
 
 const MESSAGE_MS = 2000
 const ROOM_MS = 10000
@@ -193,6 +194,7 @@ class ChatStore {
       // ten seconds away and would leave an unread count on the room being read.
       const entry = this.rooms.find((r) => r.id === room)
       if (entry) entry.unread = 0
+      void notify.refresh()
     } catch {
       // Cosmetic: the next successful poll will try again.
     }

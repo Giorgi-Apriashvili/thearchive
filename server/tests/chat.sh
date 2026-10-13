@@ -308,6 +308,43 @@ check "reading clears them" \
     "$(as "$BOB" GET /api/chat/rooms | room Saturday | rf mentions_unread)" "0"
 
 echo
+echo "=== notifications ==="
+# What GET /api/notifications reports must match the badges: a pop-up for something the
+# site no longer shows as new would be a summons to nothing.
+nf() { as "$1" GET /api/notifications | py "import sys,json;d=json.load(sys.stdin);items=d['items'];c=d['counts'];print($2)"; }
+check "needs a session" "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/notifications")" "401"
+check "bob, who has read everything, has nothing waiting" "$(nf "$BOB" "c['mentions'], len(items)")" "0 0"
+NOTE=$(as "$ALICE" POST /api/chat/rooms '{"name":"Lake trip"}' | jf id)
+as "$ALICE" POST "/api/chat/rooms/$NOTE/invite" '{"username":"bob"}' >/dev/null
+as "$ALICE" POST "/api/chat/rooms/$NOTE/invite" '{"username":"carol"}' >/dev/null
+check "an invitation is waiting for carol" \
+    "$(nf "$CAROL" "c['invitations'], items[0]['kind'], items[0]['key'], items[0]['room']['name'], items[0]['from']['username']")" \
+    "1 invitation i:$NOTE Lake trip alice"
+as "$BOB" POST "/api/chat/rooms/$NOTE/respond" '{"action":"accept"}' >/dev/null
+check "accepting answers it" "$(nf "$BOB" "c['invitations']")" "0"
+N1=$(as "$ALICE" POST "/api/chat/rooms/$NOTE/messages" '{"body":"@bob are you driving?\nI can bring snacks"}' | jf id)
+check "a mention of bob is waiting" \
+    "$(nf "$BOB" "c['mentions'], items[0]['kind'], items[0]['key'], items[0]['room']['id'], items[0]['from']['username']")" \
+    "1 mention m:$N1 $NOTE alice"
+check "with the message on one line" "$(nf "$BOB" "items[0]['excerpt']")" "@bob are you driving? I can bring snacks"
+as "$ALICE" POST "/api/chat/rooms/$NOTE/messages" "{\"body\":\"@bob $(py "print('é'*200)")\"}" >/dev/null
+check "a long message is cut at 140 characters, not bytes" \
+    "$(nf "$BOB" "len(items[0]['excerpt']), items[0]['excerpt'][-1]")" "141 …"
+check "newest first" "$(nf "$BOB" "items[1]['key']")" "m:$N1"
+as "$ALICE" POST "/api/chat/rooms/$NOTE/messages" '{"body":"@alice remember the map"}' >/dev/null
+check "mentioning yourself notifies no one" "$(nf "$ALICE" "c['mentions']")" "0"
+check "a plain message is not a mention" \
+    "$(as "$ALICE" POST "/api/chat/rooms/$NOTE/messages" '{"body":"no names here"}' >/dev/null; nf "$BOB" "c['mentions']")" "2"
+as "$ALICE" DELETE "/api/chat/messages/$N1" >/dev/null
+check "a removed message stops being one" "$(nf "$BOB" "c['mentions'], 'm:$N1' in [i['key'] for i in items]")" "1 False"
+LASTN=$(as "$BOB" GET "/api/chat/rooms/$NOTE/messages" | py "import sys,json;print(json.load(sys.stdin)['messages'][-1]['id'])")
+as "$BOB" POST "/api/chat/rooms/$NOTE/read" "{\"last_id\":$LASTN}" >/dev/null
+check "reading the room clears them" "$(nf "$BOB" "c['mentions'], len(items)")" "0 0"
+check "carol, invited but not in, is not notified of mentions" "$(nf "$CAROL" "c['mentions']")" "0"
+as "$CAROL" POST "/api/chat/rooms/$NOTE/respond" '{"action":"block_room"}' >/dev/null
+check "blocking the room withdraws its invitation" "$(nf "$CAROL" "c['invitations'], len(items)")" "0 0"
+
+echo
 echo "=== declining ==="
 as "$ALICE" POST "/api/chat/rooms/$ROOM/invite" '{"username":"carol"}' >/dev/null
 check "carol declines" \
@@ -400,9 +437,9 @@ check "and the member list" \
 # message body, which nobody may rewrite, and the client matches the two to decide what
 # to highlight. The link that matters is user_id.
 check "an old @bob stays @bob" \
-    "$(sql "SELECT DISTINCT mentioned_name FROM message_mentions;")" "bob"
+    "$(sql "SELECT DISTINCT mn.mentioned_name FROM message_mentions mn JOIN messages m ON m.id = mn.message_id WHERE m.room_id = $ROOM;")" "bob"
 check "and still points at the same account" \
-    "$(sql "SELECT COUNT(*) FROM message_mentions WHERE user_id = $BOBID;")" "3"
+    "$(sql "SELECT COUNT(*) FROM message_mentions mn JOIN messages m ON m.id = mn.message_id WHERE m.room_id = $ROOM AND mn.user_id = $BOBID;")" "3"
 # Which is why 'was I named' is answered by account, not by comparing names: robert can
 # be renamed and 'bob' handed to someone else.
 check "he is still the one those messages named" \

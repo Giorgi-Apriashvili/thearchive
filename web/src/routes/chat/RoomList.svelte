@@ -1,6 +1,7 @@
 <script lang="ts">
   import { api, ApiError, type ChatRoom } from '../../lib/api'
   import { chat } from '../../lib/chat.svelte'
+  import { notify } from '../../lib/notify.svelte'
   import DeclineDialog from './DeclineDialog.svelte'
 
   let { onOpen }: { onOpen: (id: number) => void } = $props()
@@ -36,6 +37,7 @@
     try {
       await api.post(`/api/chat/rooms/${room.id}/respond`, { action })
       await chat.loadRooms()
+      void notify.refresh()
       if (action === 'accept') onOpen(room.id)
     } catch (e) {
       error = e instanceof ApiError ? e.message : 'that did not work'

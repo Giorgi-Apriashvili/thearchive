@@ -215,6 +215,24 @@ export interface ShareCard {
 }
 
 /** A link a member sent you. */
+/** Something waiting for you, as GET /api/notifications reports it. `key` is stable per
+ *  item, so successive polls (and several tabs) can tell what is new. */
+export interface NotificationItem {
+  key: string
+  kind: 'mention' | 'link' | 'invitation'
+  at: number
+  from?: { username: string; display_name?: string }
+  room?: { id: number; name: string }
+  excerpt?: string
+  titles?: string[]
+  note?: string
+}
+
+export interface Notifications {
+  counts: { mentions: number; links: number; invitations: number }
+  items: NotificationItem[]
+}
+
 /** One send: the links someone sent you together, with their note once. */
 export interface InboxItem {
   id: string

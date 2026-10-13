@@ -1,7 +1,7 @@
 // Drives a real browser through every part of the app that does something a CSP
 // governs, and records each securitypolicyviolation event per step. Ends with a
 // deliberate violation as a control: a detector that never fires proves nothing.
-const { chromium } = require('playwright')
+const { chromium, request } = require('playwright')
 
 const { BASE, TOKEN, PHOTO } = process.env
 const PASS = 'correct-horse-battery'
@@ -15,6 +15,31 @@ const PASS = 'correct-horse-battery'
     document.addEventListener('securitypolicyviolation', (e) =>
       window.__csp.push(`${e.effectiveDirective} blocked ${e.blockedURI || '(inline)'}`),
     )
+  })
+  // Headless Chromium shows no notifications, so the page gets a stand-in that records
+  // them, and a focus switch the test can flip to play "looking at another window".
+  // Permission is kept in localStorage so it survives navigation, as a real grant would.
+  await ctx.addInitScript(() => {
+    window.__notes = []
+    window.__focused = true
+    document.hasFocus = () => window.__focused
+    window.Notification = class {
+      static get permission() {
+        return localStorage.getItem('__perm') || 'default'
+      }
+      static async requestPermission() {
+        localStorage.setItem('__perm', 'granted')
+        return 'granted'
+      }
+      constructor(title, options = {}) {
+        this.title = title
+        this.body = options.body
+        this.tag = options.tag
+        this.onclick = null
+        window.__notes.push(this)
+      }
+      close() {}
+    }
   })
   const page = await ctx.newPage()
   const errors = []
@@ -237,6 +262,60 @@ const PASS = 'correct-horse-battery'
     await page.getByText(/never made a link/).waitFor()
     await page.getByRole('button', { name: /Create link for \d+ file/ }).click()
     await page.getByText(/Link created/).waitFor()
+  })
+
+  await step('notifications: offered once, then on', async () => {
+    await page.goto('/')
+    await page.getByText(/Get a notification when someone mentions you/).waitFor()
+    await page.getByRole('button', { name: 'Turn on' }).click()
+    await page.getByText(/Get a notification when someone mentions you/).waitFor({ state: 'detached' })
+    await page.goto('/account')
+    const section = page.locator('section', { hasText: 'Notifications on this device' })
+    await section.getByText('On', { exact: true }).waitFor()
+  })
+
+  await step('notifications: an invitation and a mention pop up while away', async () => {
+    await page.goto('/')
+    await page.waitForTimeout(1000) // the first poll, which only learns what is already there
+    const bob = await request.newContext({ baseURL: BASE })
+    try {
+      await bob.post('/api/auth/login', { data: { username: 'bob', password: PASS } })
+      const room = await (await bob.post('/api/chat/rooms', { data: { name: 'Pop-up test' } })).json()
+      await bob.post(`/api/chat/rooms/${room.id}/invite`, { data: { username: 'alice' } })
+      // Looking at something else; a visibility event makes the poll run now, not in 30s.
+      const away = () =>
+        page.evaluate(() => {
+          window.__focused = false
+          document.dispatchEvent(new Event('visibilitychange'))
+        })
+      const popped = (text) =>
+        page.waitForFunction((t) => window.__notes.some((n) => n.title.includes(t)), text)
+      await away()
+      await popped('bob invited you to Pop-up test')
+      await page.waitForFunction(() => /^\(\d+\) WeekendArchive$/.test(document.title))
+
+      await page.request.post(`/api/chat/rooms/${room.id}/respond`, { data: { action: 'accept' } })
+      await bob.post(`/api/chat/rooms/${room.id}/messages`, { data: { body: '@alice the tickets are booked' } })
+      await away()
+      await popped('bob mentioned you in Pop-up test')
+      const body = await page.evaluate(() => window.__notes.at(-1).body)
+      if (body !== '@alice the tickets are booked') throw new Error(`unexpected body: ${body}`)
+      // Clicking it opens the room.
+      await page.evaluate(() => window.__notes.at(-1).onclick())
+      await page.waitForURL(`**/chat/${room.id}`)
+      await page.getByPlaceholder('Message Pop-up test').waitFor()
+
+      // While looking at the site, the badges say it; nothing pops up.
+      await page.evaluate(() => (window.__focused = true))
+      await bob.post(`/api/chat/rooms/${room.id}/messages`, { data: { body: '@alice while you look' } })
+      await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+      await page.waitForTimeout(1500)
+      const shown = await page.evaluate(() => window.__notes.filter((n) => n.body?.includes('while you look')).length)
+      if (shown !== 0) throw new Error('a notification popped up while the site was in focus')
+    } finally {
+      await page.evaluate(() => (window.__focused = true))
+      await bob.dispose()
+    }
   })
 
   await step('control panel', async () => {

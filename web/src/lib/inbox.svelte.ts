@@ -6,6 +6,7 @@
 // list is actually on screen, which is also when they are marked seen.
 
 import { api, ApiError, type InboxItem } from './api'
+import { notify } from './notify.svelte'
 
 const POLL_MS = 10_000
 
@@ -60,6 +61,7 @@ class InboxStore {
     try {
       await api.post('/api/inbox/seen')
       this.unread = 0
+      void notify.refresh()
     } catch {
       // The badge simply stays until the next attempt.
     }

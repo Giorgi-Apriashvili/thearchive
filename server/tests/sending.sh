@@ -218,6 +218,22 @@ check "dismissing an item" "$(code -b "$DAVE" -X DELETE "$BASE/api/inbox/items/$
 check "dismisses every link in it" "$(inbox "$DAVE" "len(items), sum(len(i['cards']) for i in items)")" "1 1"
 
 echo
+echo "=== links sent to you, as notifications ==="
+nf() { curl -s -b "$1" "$BASE/api/notifications" | py "import sys,json;d=json.load(sys.stdin);items=[i for i in d['items'] if i['kind']=='link'];c=d['counts'];print($2)"; }
+# Dave's inbox holds sends from above; seeing them is what "already notified" means.
+post_code "$DAVE" /api/inbox/seen '{}' >/dev/null
+check "nothing waiting once seen" "$(nf "$DAVE" "c['links'], len(items)")" "0 0"
+many "$ALICE" dave "{\"links\":[\"$PHOTOS\",\"$PACKING\"],\"note\":\"for the drive\"}" >/dev/null
+check "a send of two links is one notification" "$(nf "$DAVE" "c['links'], len(items)")" "1 1"
+check "from alice, with both titles in order and the note" \
+    "$(nf "$DAVE" "items[0]['from']['username'], '|'.join(items[0]['titles']), items[0]['note']")" \
+    "alice Kazbegi photos|Packing list for the drive"
+check "keyed by the send, as the inbox is" \
+    "$(nf "$DAVE" "items[0]['key']")" "l:$(inbox "$DAVE" "items[0]['id']")"
+post_code "$DAVE" /api/inbox/seen '{}' >/dev/null
+check "opening Shared with you clears it" "$(nf "$DAVE" "c['links'], len(items)")" "0 0"
+
+echo
 echo "=== blocks hold ==="
 BEFORE=$(inbox "$BOB" 'len(items)')
 ALICE_ID=$(sql "SELECT id FROM users WHERE username='alice';")

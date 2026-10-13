@@ -104,6 +104,7 @@ add_executable(thearchive
     src/profiles.cc
     src/text.cc
     src/inbox.cc
+    src/notifications.cc
 )
 
 target_include_directories(thearchive PRIVATE src)

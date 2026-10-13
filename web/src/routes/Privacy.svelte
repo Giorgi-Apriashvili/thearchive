@@ -100,7 +100,10 @@
           <li>
             <strong>Signing in:</strong> one cookie, holding a random session identifier. It is
             needed for the site to work, so there is no cookie banner, and it is the only cookie
-            the site sets. A session lasts {days(r.session_days)} or until you sign out.
+            the site sets. A session lasts {days(r.session_days)} or until you sign out. If you
+            turn on notifications, that choice, and which notifications have already been
+            shown, are kept in your browser's own storage on that device and never sent to the
+            site. The notifications are your browser's, with no outside service involved.
           </li>
           <li>
             <strong>What you upload:</strong> the files, and with each one its name, type and

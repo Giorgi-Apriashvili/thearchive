@@ -2,6 +2,7 @@
   import { untrack } from 'svelte'
   import { api, ApiError, type Me, type Profile } from '../lib/api'
   import { link } from '../lib/router.svelte'
+  import { notify } from '../lib/notify.svelte'
   import Avatar from '../lib/Avatar.svelte'
 
   let { me, onChanged }: { me: Me; onChanged: () => void } = $props()
@@ -278,4 +279,36 @@
     Forgotten it instead? There is no email in this system, so nothing can be sent to you —
     ask an administrator to reset it.
   </p>
+
+  <section class="mt-6 rounded-xl border border-ink-800 p-4">
+    <h2 class="text-sm font-medium text-ink-300">Notifications on this device</h2>
+    <p class="mt-1 text-xs text-ink-500">
+      A pop-up when someone mentions you, sends you a link or invites you to a room, while
+      this site is open in a tab — even one in the background. Nothing arrives once every
+      tab is closed.
+    </p>
+    <div class="mt-3 flex items-center justify-between gap-3 text-sm">
+      {#if !notify.supported}
+        <p class="text-ink-500">This browser does not support notifications.</p>
+      {:else if notify.permission === 'denied'}
+        <!-- A site cannot ask again once refused; only the browser can undo it. -->
+        <p class="text-ink-500">
+          Blocked in this browser's settings. To allow them, use the icon beside the address
+          bar, then reload.
+        </p>
+      {:else if notify.enabled}
+        <p class="text-ink-300">On</p>
+        <button
+          class="rounded-lg border border-ink-700 px-3 py-1.5 text-xs hover:border-ink-500"
+          onclick={() => notify.disable()}
+        >Turn off</button>
+      {:else}
+        <p class="text-ink-500">Off</p>
+        <button
+          class="rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-ink-950 hover:bg-accent-dim"
+          onclick={() => notify.enable()}
+        >Turn on</button>
+      {/if}
+    </div>
+  </section>
 </div>

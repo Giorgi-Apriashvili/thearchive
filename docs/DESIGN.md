@@ -489,6 +489,7 @@ name, the off-site result and disk use.
 | `GET` | `/api/inbox`, `/api/inbox/unread` | links sent to you; the count behind the badge |
 | `POST` | `/api/inbox/seen` | clears the badge |
 | `DELETE` | `/api/inbox/items/{id}` | dismisses one send, every link in it — yours only |
+| `GET` | `/api/notifications` | what is waiting for you — mentions, links, invitations — for pop-ups |
 
 Every endpoint that checks a password — sign-in, change-password, and any share endpoint
 given `X-Share-Password` or `?p=` — answers `429` with `Retry-After` when the guessing
@@ -756,6 +757,27 @@ that named you and excluding removed ones — a badge pointing at a tombstone is
 to nothing. The UI renders that differently (`@3` rather than `3`), because being named
 is a different event from something having happened. **Nothing is delivered yet**; the
 count is the substrate a notifier will read.
+
+### Notifications
+
+Pop-ups while the site is open, for an unread mention, an unseen send of links, or an
+unanswered room invitation. `GET /api/notifications` lists what is waiting with a stable
+key per item (`m:<message>`, `l:<send>`, `i:<room>`) and the counts, using the same
+conditions as the badges — so a pop-up never points at something the site no longer shows
+as new (a removed message, a room since read, a room blocked, a mention you wrote).
+
+The browser polls it every thirty seconds, and unlike chat's polls it keeps doing so in a
+hidden tab, which is the whole point. What is waiting at page load is taken as known, so
+opening the site is not a burst of pop-ups; a pop-up appears only while the site is not in
+focus, since otherwise the badges already say it; and several tabs share a short list of
+keys already shown in localStorage, so one item pops up once. The tab title carries the
+count.
+
+These are the browser's own notifications, not Web Push: no service worker, no push
+service, nothing about members leaving the server — and so nothing once every tab is
+closed. Push, which would reach a closed site, is a separate and larger step: it routes
+through the browser vendor's push service and, on iOS, needs the site installed to the
+home screen.
 
 ### Who is speaking
 

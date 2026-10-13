@@ -13,6 +13,7 @@
 #include "db.h"
 #include "gc.h"
 #include "inbox.h"
+#include "notifications.h"
 #include "privacy.h"
 #include "profiles.h"
 #include "shares.h"
@@ -74,6 +75,7 @@ int main(int, char** argv) {
         archive::registerPrivacyRoutes();
         archive::registerProfileRoutes(db, auth, dataDir);
         archive::registerInboxRoutes(db, auth);
+        archive::registerNotificationRoutes(db, auth);
         archive::scheduleGarbageCollection(db, dataDir);
 
         LOG_INFO << "public base url " << archive::publicBaseUrl();

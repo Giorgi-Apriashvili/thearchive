@@ -2,6 +2,7 @@
   import { api, type Me } from '../lib/api'
   import { chat } from '../lib/chat.svelte'
   import { inbox } from '../lib/inbox.svelte'
+  import { notify } from '../lib/notify.svelte'
   import { link, router } from '../lib/router.svelte'
   import Confirm from '../lib/Confirm.svelte'
   import Avatar from '../lib/Avatar.svelte'
@@ -78,6 +79,24 @@
         class="text-xs text-ink-500 hover:text-ink-300"
         onclick={() => navigator.clipboard.writeText(inviteCode)}
       >Copy</button>
+    </div>
+  {/if}
+
+  {#if notify.shouldOffer}
+    <!-- Offered once. The browser only allows its permission prompt from a click, so
+         this is a button rather than something that asks by itself on load. -->
+    <div class="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-ink-700 bg-ink-900 px-3 py-2.5 text-sm">
+      <p class="text-ink-300">
+        Get a notification when someone mentions you, sends you a link or invites you to a
+        room — while this site is open in a tab.
+      </p>
+      <div class="flex shrink-0 items-center gap-3 text-xs">
+        <button class="text-ink-500 hover:text-ink-300" onclick={() => notify.dismissOffer()}>Not now</button>
+        <button
+          class="rounded-lg bg-accent px-3 py-1.5 font-medium text-ink-950 hover:bg-accent-dim"
+          onclick={() => notify.enable()}
+        >Turn on</button>
+      </div>
     </div>
   {/if}
 

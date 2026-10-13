@@ -8,6 +8,7 @@
   import Profile from './routes/Profile.svelte'
   import Admin from './routes/admin/Admin.svelte'
   import { router } from './lib/router.svelte'
+  import { notify } from './lib/notify.svelte'
 
   // The download page is matched against the live path so the control panel's
   // client-side navigation is reflected here too.
@@ -30,6 +31,14 @@
 
   let me = $state<Me | null>(null)
   let ready = $state(false)
+
+  // Notifications run on every signed-in page, not just the workspace: being on your
+  // account page should not mean missing a mention. Keyed on signed-in-ness rather than
+  // on `me` itself, which is replaced whenever the profile is edited.
+  const signedIn = $derived(me !== null)
+  $effect(() => {
+    if (signedIn) return notify.watch()
+  })
 
   async function loadSession() {
     try {
