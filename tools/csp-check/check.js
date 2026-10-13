@@ -248,7 +248,31 @@ const PASS = 'correct-horse-battery'
     await message.hover()
     await message.getByRole('button', { name: 'Remove', exact: true }).click()
     await page.getByRole('alertdialog').getByRole('button', { name: 'Remove' }).click()
-    await page.getByText('Removed by alice').waitFor()
+    // Your own removal leaves nothing behind.
+    await page.locator('.group', { hasText: '— edited' }).waitFor({ state: 'detached' })
+  })
+
+  await step('chat: an admin removes a message, then clears the marker', async () => {
+    const room = await (await page.request.post('/api/chat/rooms', { data: { name: 'Moderated' } })).json()
+    await page.request.post(`/api/chat/rooms/${room.id}/invite`, { data: { username: 'bob' } })
+    const bob = await request.newContext({ baseURL: BASE })
+    try {
+      await bob.post('/api/auth/login', { data: { username: 'bob', password: PASS } })
+      await bob.post(`/api/chat/rooms/${room.id}/respond`, { data: { action: 'accept' } })
+      await bob.post(`/api/chat/rooms/${room.id}/messages`, { data: { body: 'something to take down' } })
+    } finally {
+      await bob.dispose()
+    }
+    await page.goto(`/chat/${room.id}`)
+    const message = page.locator('.group', { hasText: 'something to take down' }).first()
+    await message.hover()
+    await message.getByRole('button', { name: 'Remove', exact: true }).click()
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Remove' }).click()
+    await page.getByRole('alertdialog').waitFor({ state: 'detached' })
+    const marker = page.locator('p', { hasText: 'Removed by an admin' })
+    await marker.waitFor()
+    await marker.getByRole('button', { name: 'Clear', exact: true }).click()
+    await marker.waitFor({ state: 'detached' })
   })
 
   await step('chat: scroll back through all of a long room', async () => {

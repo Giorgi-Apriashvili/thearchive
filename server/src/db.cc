@@ -421,7 +421,16 @@ constexpr const char* kSchemaV21 = R"SQL(
 ALTER TABLE message_shares ADD COLUMN inline INTEGER NOT NULL DEFAULT 0;
 )SQL";
 
-constexpr std::array<Migration, 21> kMigrations{{
+// Removed messages that should not even leave a marker. Removing your own message makes
+// it vanish; an administrator's removal of someone else's leaves "Removed by an admin"
+// until an administrator clears it, which sets cleared_at. The row stays either way — it
+// is what keeps ids, replies and the changed poll consistent — and its text was already
+// erased on removal.
+constexpr const char* kSchemaV22 = R"SQL(
+ALTER TABLE messages ADD COLUMN cleared_at INTEGER;
+)SQL";
+
+constexpr std::array<Migration, 22> kMigrations{{
     {1, kSchemaV1},
     {2, kSchemaV2},
     {3, kSchemaV3},
@@ -443,6 +452,7 @@ constexpr std::array<Migration, 21> kMigrations{{
     {19, kSchemaV19},
     {20, kSchemaV20},
     {21, kSchemaV21},
+    {22, kSchemaV22},
 }};
 
 }  // namespace

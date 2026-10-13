@@ -885,8 +885,14 @@ count is the substrate a notifier will read.
 ### Editing, leaving and running a room
 
 Authors can edit their own messages (the new text replaces the old; no version history is
-kept, and mentions are re-resolved against it) and remove them, leaving the same tombstone
-an administrator's removal does. Edits are the author's alone: an admin rewriting someone's
+kept, and mentions are re-resolved against it) and remove them. **A removal you make of
+your own message vanishes**; an administrator's removal of someone else's leaves "Removed
+by an admin", so moderation is never silent, until an administrator clears that marker too
+(`cleared_at`, recorded in the activity log). Either way the text was erased on removal,
+and the row stays — it is what keeps ids, the changed poll and replies consistent, and a
+reply to a vanished message still says it answered something removed. The server marks
+such rows `hidden`; the client leaves them out before grouping and dividers are worked
+out, so nothing stray is left where they were. Edits are the author's alone: an admin rewriting someone's
 words would put them in that person's mouth.
 
 Anyone can leave a room; coming back takes a new invitation, as after declining, and what

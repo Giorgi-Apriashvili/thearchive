@@ -222,8 +222,9 @@
             <strong>Chat is kept until it is removed.</strong> If an account is deleted, its
             messages stay in their rooms under the name the person last had, so conversations
             remain readable. You can edit or remove your own messages; an edit replaces the
-            earlier text, which is not kept. Administrators can remove anyone's message. A removed
-            message is replaced by a marker saying who removed it, and its text, and any links it
+            earlier text, which is not kept, and a message you remove disappears. Administrators
+            can remove anyone's message, which leaves a marker saying an administrator removed it
+            until an administrator clears that too. Either way the text, and any links it
             carried, are removed. A room's creator or an administrator can delete a whole room,
             which removes everything said in it. Leaving a room, or being removed from it, leaves
             what you said there.

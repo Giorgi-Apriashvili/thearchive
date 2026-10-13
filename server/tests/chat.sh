@@ -374,9 +374,11 @@ check "a poll that already has it learns of the edit" \
 check "nobody else can edit it" "$(code "$ALICE" PATCH "/api/chat/messages/$E1" '{"body":"hijacked"}')" "403"
 check "nor empty it" "$(code "$BOB" PATCH "/api/chat/messages/$E1" '{"body":"   "}')" "400"
 check "an author removes their own message" "$(code "$BOB" DELETE "/api/chat/messages/$E1")" "200"
-check "leaving a tombstone in their name" \
+check "the server keeps its place, attributed" \
     "$(as "$ALICE" GET "/api/chat/rooms/$FUN/messages" | bodies | tail -1)" "[removed by bob]"
 check "and its text erased" "$(sql "SELECT length(body) FROM messages WHERE id=$E1;")" "0"
+check "and, being their own, it is shown as nothing at all" \
+    "$(as "$ALICE" GET "/api/chat/rooms/$FUN/messages" | py "import sys,json;print([m.get('hidden') for m in json.load(sys.stdin)['messages'] if m['id']==$E1])")" "[True]"
 check "which other clients learn of too" \
     "$(as "$ALICE" GET "/api/chat/rooms/$FUN/messages?since=$E1&changed=$T0" | py "import sys,json;print([m.get('deleted') for m in json.load(sys.stdin)['changed']])")" "[True]"
 check "a removed message cannot be edited" "$(code "$BOB" PATCH "/api/chat/messages/$E1" '{"body":"back"}')" "404"
@@ -520,6 +522,26 @@ PM2=$(as "$BOB" POST "/api/chat/rooms/$PH/messages" "{\"photos\":[\"$OTHERPH\"]}
 PTOK2=$(sql "SELECT s.token FROM message_shares ms JOIN shares s ON s.id=ms.share_id WHERE ms.message_id=$PM2;")
 check "deleting the room takes the photos posted in it" \
     "$(code "$ALICE" DELETE "/api/chat/rooms/$PH"),$(sql "SELECT deleted_at IS NOT NULL FROM shares WHERE token='$PTOK2';")" "200,1"
+
+echo
+echo "=== an admin's removal, and clearing its marker ==="
+CL=$(as "$ALICE" POST /api/chat/rooms '{"name":"Markers"}' | jf id)
+as "$ALICE" POST "/api/chat/rooms/$CL/invite" '{"username":"bob"}' >/dev/null
+as "$BOB" POST "/api/chat/rooms/$CL/respond" '{"action":"accept"}' >/dev/null
+X=$(as "$BOB" POST "/api/chat/rooms/$CL/messages" '{"body":"something regrettable"}' | jf id)
+hidden() { as "$1" GET "/api/chat/rooms/$CL/messages" | py "import sys,json;print([(m.get('deleted', False), m.get('hidden', False)) for m in json.load(sys.stdin)['messages'] if m['id']==$X])"; }
+as "$ALICE" DELETE "/api/chat/messages/$X" >/dev/null
+check "an admin removing someone's message leaves a marker" "$(hidden "$BOB")" "[(True, False)]"
+check "which a member cannot clear" "$(code "$BOB" POST "/api/chat/messages/$X/clear")" "403"
+T2=$(as "$BOB" GET "/api/chat/rooms/$CL/messages" | jf now)
+check "an admin can" "$(code "$ALICE" POST "/api/chat/messages/$X/clear")" "200"
+check "and then it is shown as nothing" "$(hidden "$BOB")" "[(True, True)]"
+check "which reaches others with their next poll" \
+    "$(as "$BOB" GET "/api/chat/rooms/$CL/messages?since=$X&changed=$T2" | py "import sys,json;print([m.get('hidden') for m in json.load(sys.stdin)['changed']])")" "[True]"
+check "clearing twice finds nothing to clear" "$(code "$ALICE" POST "/api/chat/messages/$X/clear")" "404"
+LIVE=$(as "$BOB" POST "/api/chat/rooms/$CL/messages" '{"body":"still here"}' | jf id)
+check "nor can a message that was never removed be cleared" "$(code "$ALICE" POST "/api/chat/messages/$LIVE/clear")" "404"
+check "it is recorded" "$(sql "SELECT detail FROM activity WHERE event='admin.marker_cleared' ORDER BY id DESC LIMIT 1;")" "in “Markers”"
 
 echo
 echo "=== declining ==="

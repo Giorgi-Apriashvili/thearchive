@@ -225,6 +225,9 @@ export interface ChatMessage {
   mentions_me?: boolean
   /** Set when the author has edited it; the text served is the edited one. */
   edited_at?: number
+  /** A removed message to show as nothing at all: its author removed it, or an
+   *  administrator cleared the marker their removal left. */
+  hidden?: boolean
   /** What this message answers. `deleted` once that has been removed. */
   reply_to?: {
     id: number

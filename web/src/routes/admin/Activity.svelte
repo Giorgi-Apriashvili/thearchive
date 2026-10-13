@@ -46,6 +46,7 @@
     'admin.link_changed': "Changed someone's link",
     'admin.link_removed': "Removed someone's link",
     'admin.message_removed': 'Removed a chat message',
+    'admin.marker_cleared': 'Cleared a removal marker',
     'admin.limit': 'Changed a storage limit',
     'chat.room_deleted': 'Deleted a chat room',
   }

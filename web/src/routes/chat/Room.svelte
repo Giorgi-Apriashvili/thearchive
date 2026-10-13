@@ -147,15 +147,20 @@
   // out of the history they are reading because a message arrived is the single most
   // annoying thing a chat window can do.
   let pinned = $state(true)
+  // What is shown: everything but removals that leave no trace. Grouping, dividers, the
+  // unread line and "seen by" are all worked out from this, so a vanished message cannot
+  // leave a stray divider or split a turn.
+  const visible = $derived(chat.messages.filter((m) => !m.hidden))
+
   // The newest message seen while at the bottom: anything after it arrived while
   // scrolled up, and is what the jump button counts.
   let seenUpTo = $state(0)
   $effect(() => {
-    const last = chat.messages[chat.messages.length - 1]
+    const last = visible[visible.length - 1]
     if (pinned && last) seenUpTo = last.id
   })
   const newBelow = $derived(
-    chat.messages.filter((m) => m.id > seenUpTo && m.author !== me.username).length,
+    visible.filter((m) => m.id > seenUpTo && m.author !== me.username).length,
   )
 
   function jumpToLatest() {
@@ -361,7 +366,7 @@
 
   // Who has read up to the latest message — not me, and not whoever wrote it.
   const seenBy = $derived.by(() => {
-    const last = chat.messages[chat.messages.length - 1]
+    const last = visible[visible.length - 1]
     if (!last || !chat.members) return []
     return chat.members.members.filter(
       (m) => m.username !== me.username && m.username !== last.author && (m.read_up_to ?? 0) >= last.id,
@@ -488,6 +493,15 @@
       await chat.loadRooms()
     } catch (e) {
       error = e instanceof ApiError ? e.message : 'could not invite them'
+    }
+  }
+
+  async function clearMarker(message: ChatMessage) {
+    try {
+      await api.post(`/api/chat/messages/${message.id}/clear`)
+      await chat.reload()
+    } catch (e) {
+      error = e instanceof ApiError ? e.message : 'could not clear it'
     }
   }
 
@@ -667,8 +681,8 @@
       <p class="text-xs text-ink-500">Nothing here yet.</p>
     {/if}
 
-    {#each chat.messages as message, i (message.id)}
-      {@const prev = i > 0 ? chat.messages[i - 1] : null}
+    {#each visible as message, i (message.id)}
+      {@const prev = i > 0 ? visible[i - 1] : null}
       {@const newDay = !prev || dayKey(prev.created_at) !== dayKey(message.created_at)}
       {@const firstUnread =
         chat.lastReadAtOpen > 0 &&
@@ -788,9 +802,15 @@
           </button>
         {/if}
         {#if message.deleted}
-          <!-- A tombstone, not a gap: quietly reflowing a conversation around what was
-               taken out is its own kind of dishonesty. -->
-          <p class="mt-0.5 text-sm italic text-ink-700">Removed by {message.deleted_by}</p>
+          <!-- Only an administrator's removal of someone else's message gets here — one
+               removed by its author is hidden. The marker keeps moderation visible; an
+               administrator can clear it. -->
+          <p class="mt-0.5 flex items-baseline gap-3 text-sm italic text-ink-700">
+            Removed by an admin
+            {#if me.role === 'admin'}
+              <button class="text-[10px] not-italic text-ink-500 hover:text-ink-300" onclick={() => clearMarker(message)}>Clear</button>
+            {/if}
+          </p>
         {:else if editingId === message.id}
           <div class="mt-1 max-w-[70ch]">
             <!-- svelte-ignore a11y_autofocus -->
@@ -1041,7 +1061,9 @@
   {@const message = removing}
   <Confirm
     title={message.author === me.username ? 'Remove your message?' : 'Remove this message?'}
-    body="It stays in the room as “Removed by {me.username}”, so the conversation keeps its shape, and its text is erased from the database. Backups taken before now still hold it until they expire."
+    body={message.author === me.username
+      ? 'It disappears from the room, and its text is erased from the database. Replies to it will say they answered a removed message. Backups taken before now still hold it until they expire.'
+      : 'It is replaced by “Removed by an admin”, which you can clear afterwards, and its text is erased from the database. Backups taken before now still hold it until they expire.'}
     confirmLabel="Remove"
     danger={true}
     onConfirm={() => remove(message)}

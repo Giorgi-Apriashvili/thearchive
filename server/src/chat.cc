@@ -789,7 +789,11 @@ void registerChatRoutes(Database& db, Auth& auth) {
                         // Profile fields, live like the role: they belong to the person now.
                         "         COALESCE(a.display_name, ''), COALESCE(a.avatar, ''), "
                         "         COALESCE(m.user_id, 0), m.edited_at, m.reply_to, m.pinned_at, "
-                        "         COALESCE(pb.username, '') "
+                        "         COALESCE(pb.username, ''), "
+                        // Shown as nothing at all: removed by its own author, or a removal
+                        // marker an administrator has cleared.
+                        "         m.deleted_at IS NOT NULL AND (m.deleted_by = m.user_id "
+                        "                                       OR m.cleared_at IS NOT NULL) "
                         "  FROM messages m LEFT JOIN users d ON d.id = m.deleted_by "
                         "  LEFT JOIN users a ON a.id = m.user_id "
                         "  LEFT JOIN users pb ON pb.id = m.pinned_by "
@@ -807,6 +811,9 @@ void registerChatRoutes(Database& db, Auth& auth) {
                         if (!stmt.columnIsNull(4)) {
                             message["deleted"] = true;
                             message["deleted_by"] = stmt.columnText(5);
+                            if (stmt.columnInt(16) != 0) {
+                                message["hidden"] = true;
+                            }
                         } else {
                             message["body"] = stmt.columnText(2);
                             if (!stmt.columnIsNull(12)) {
@@ -1182,6 +1189,39 @@ void registerChatRoutes(Database& db, Auth& auth) {
             }));
         },
         {drogon::Delete, drogon::Patch});
+
+    // ---- clearing a removal marker --------------------------------------------------
+    // An administrator's removal of someone's message leaves "Removed by an admin" in its
+    // place; an administrator can clear that too, and the message then shows as nothing,
+    // like one its author removed. Recorded, as every administrator action is.
+    app.registerHandler(
+        "/api/chat/messages/{id}/clear",
+        [&db, &auth](const drogon::HttpRequestPtr& req,
+                     std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                     const std::string& id) {
+            callback(guarded([&] {
+                const User user = requireAdmin(req, auth);
+                const std::int64_t messageId = parseId(id, "message");
+                const std::int64_t now = nowSeconds();
+                auto stmt = db.prepare(
+                    "UPDATE messages SET cleared_at = ?, updated_at = ? "
+                    "WHERE id = ? AND deleted_at IS NOT NULL AND cleared_at IS NULL");
+                stmt.bind(1, now).bind(2, now).bind(3, messageId).run();
+                if (db.changes() == 0) {
+                    throw HttpError{404, "no removal marker to clear"};
+                }
+                auto where = db.prepare(
+                    "SELECT r.name FROM messages m JOIN rooms r ON r.id = m.room_id WHERE m.id = ?");
+                where.bind(1, messageId);
+                if (where.step()) {
+                    activity::record(req, user, "admin.marker_cleared", "in “" + where.columnText(0) + "”");
+                }
+                Json::Value out;
+                out["cleared"] = true;
+                return drogon::HttpResponse::newHttpJsonResponse(out);
+            }));
+        },
+        {drogon::Post});
 
     // ---- reactions and pins --------------------------------------------------------
     // Both are open to anyone in the room, on any message still there, and both touch
