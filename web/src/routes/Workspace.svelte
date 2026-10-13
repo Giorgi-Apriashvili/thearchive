@@ -40,8 +40,9 @@
   }
 </script>
 
-<div class="mx-auto max-w-3xl px-4 py-10">
-  <header class="flex items-baseline justify-between">
+<div class="mx-auto max-w-3xl px-4 py-10 lg:max-w-6xl 2xl:max-w-[88rem]">
+  <!-- Wraps on a phone: the links drop under the wordmark rather than squeezing into it. -->
+  <header class="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-3">
     <div>
       <h1>
         <!-- A real navigation, not router.go(): clicking this while already on "/"
@@ -56,7 +57,7 @@
         <MemberName username={me.username} displayName={me.display_name} role={me.role} />
       </p>
     </div>
-    <div class="flex items-center gap-4 text-xs">
+    <div class="flex items-center gap-4 whitespace-nowrap text-xs">
       <!-- Minting is admin-only server-side; showing the button to everyone would just
            offer a 403. -->
       {#if me.role !== 'user'}

@@ -419,6 +419,21 @@ Fonts are never inlined into the CSS (`assetsInlineLimit` in `vite.config.ts`): 
 inlines assets under 4 KB as `data:` URLs, which `font-src 'self'` refuses, and two of
 this font's subsets are that small.
 
+### Layout across screen sizes
+
+Mobile first: phones get one column, and width is added only as the screen has room for
+it. The workspace is 768 px wide on small screens, 1152 px from `lg` and 1408 px from
+`2xl`. From `lg`, Uploads splits in two — what you are sending on the left, what you
+have sent and been sent on the right — and the download page becomes a gallery of 3–4
+tiles. From `md`, chat fills the window's height (`100dvh` less the header) rather than a
+fixed box, and from `2xl` a third column keeps the open room's members in view. Text keeps
+a readable measure (messages stop at 70ch) and its size: on a large monitor, making text
+bigger is the browser's zoom and the OS's scaling, not the page's to override.
+
+Grid columns that hold user content are `minmax(0, 1fr)`, never a plain `1fr` or an
+implicit column: those will not shrink below their widest unbreakable content, so one
+long link in a message pushed the whole conversation past the page.
+
 ## Deployment
 
 Multi-stage Docker build (builder compiles Drogon + app; runtime carries only shared libs),

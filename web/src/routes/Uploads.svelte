@@ -475,457 +475,465 @@
   }
 </script>
 
-{#if disk}
-  <section class="mt-6 rounded-xl border border-ink-800 px-4 py-3">
-    <div class="flex items-baseline justify-between text-xs">
-      <span class="text-ink-300">Storage</span>
-      <span class="tnum text-ink-500">{bytes(disk.free)} free of {bytes(disk.total)}</span>
-    </div>
-
-    <!-- Two segments: what WeekendArchive holds, and what else is on the same volume.
-         Separating them makes it obvious whether a full disk is our doing. -->
-    <div class="mt-2 flex h-1.5 overflow-hidden rounded bg-ink-800" title="{bytes(disk.mine)} archive, {bytes(disk.others)} other">
-      <div class="h-full bg-accent" style="width: {disk.minePct}%"></div>
-      <div class="h-full bg-ink-700" style="width: {disk.othersPct}%"></div>
-    </div>
-
-    <p class="tnum mt-2 text-xs text-ink-500">
-      <span class="text-accent">■</span>
-      WeekendArchive {bytes(disk.mine)}
-      {#if storage}({storage.blob_count} file{storage.blob_count === 1 ? '' : 's'}){/if}
-      · <span class="text-ink-700">■</span> other {bytes(disk.others)}
-      {#if disk.saved > 0}
-        · deduplication saved {bytes(disk.saved)}
-      {/if}
-      {#if storage?.incoming_bytes}
-        · {bytes(storage.incoming_bytes)} uploading
-      {/if}
-    </p>
-
-    {#if storage?.my_usage !== undefined}
-      <div class="mt-3 border-t border-ink-800 pt-3">
+<!-- One column on phones and small windows; from lg, what you are sending on the left and
+     what you have sent and been sent on the right, so neither scrolls the other away. -->
+<div class="lg:grid lg:grid-cols-2 lg:items-start lg:gap-10">
+  <div class="min-w-0">
+    {#if disk}
+      <section class="mt-6 rounded-xl border border-ink-800 px-4 py-3">
         <div class="flex items-baseline justify-between text-xs">
-          <span class="text-ink-300">Your space</span>
-          <span class="tnum text-ink-500">
-            {#if storage.my_limit}
-              {bytes(storage.my_usage)} of {bytes(storage.my_limit)}
-            {:else}
-              {bytes(storage.my_usage)} · no limit
-            {/if}
-          </span>
+          <span class="text-ink-300">Storage</span>
+          <span class="tnum text-ink-500">{bytes(disk.free)} free of {bytes(disk.total)}</span>
         </div>
-        {#if storage.my_limit}
-          <div class="mt-2 h-1.5 overflow-hidden rounded bg-ink-800">
-            <div
-              class="h-full {storage.my_usage / storage.my_limit > 0.9 ? 'bg-red-400' : 'bg-accent'}"
-              style="width: {Math.min(100, (storage.my_usage / storage.my_limit) * 100)}%"
-            ></div>
-          </div>
-          <p class="mt-2 text-xs text-ink-500">
-            Each file counts once, however many of your links hold it. Links that expire or
-            are removed give their space back.
-          </p>
-        {/if}
-      </div>
-    {/if}
-  </section>
-{/if}
 
-<!-- svelte-ignore a11y_no_static_element_interactions -->
-<div
-  role="region"
-  aria-label="Drop files to upload"
-  class="mt-8 rounded-xl border-2 border-dashed p-10 text-center transition {dragging
-    ? 'border-accent bg-ink-900'
-    : 'border-ink-700'}"
-  ondragover={(e) => {
-    e.preventDefault()
-    dragging = true
-  }}
-  ondragleave={() => (dragging = false)}
-  ondrop={(e) => {
-    e.preventDefault()
-    dragging = false
-    if (e.dataTransfer?.files) enqueue(e.dataTransfer.files)
-  }}
->
-  <p class="text-sm text-ink-300">Drop files here</p>
-  <p class="mt-1 text-xs text-ink-500">or</p>
-  <label class="mt-3 inline-block cursor-pointer rounded-lg border border-ink-700 px-3 py-1.5 text-sm hover:border-ink-500">
-    Choose files
-    <input
-      bind:this={fileInput}
-      type="file"
-      multiple
-      class="hidden"
-      onchange={(e) => {
-        const input = e.currentTarget as HTMLInputElement
-        if (input.files) enqueue(input.files)
-        input.value = ''
-        // Chosen from a link further down: bring the upload list into view.
-        if (pickedForLink) document.getElementById('upload-list')?.scrollIntoView({ behavior: 'smooth' })
-        pickedForLink = false
-      }}
-    />
-  </label>
-</div>
-
-{#if unfinished.length}
-  <section class="mt-6 rounded-lg border border-ink-700 bg-ink-900 px-3 py-2.5 text-sm">
-    <p class="text-ink-300">
-      {unfinished.length === 1 ? 'An upload' : 'Some uploads'} stopped part-way. Choose the same
-      file again to continue from where it stopped.
-    </p>
-    <ul class="mt-2 space-y-1.5">
-      {#each unfinished as upload (upload.id)}
-        <li class="flex items-center justify-between gap-3 text-xs">
-          <span class="tnum min-w-0 truncate text-ink-300">
-            {upload.filename}
-            <span class="text-ink-500">
-              · {Math.floor((upload.offset / Math.max(1, upload.size)) * 100)}% of {bytes(upload.size)} ·
-              kept for {until(upload.expires_at)}
-            </span>
-          </span>
-          <button class="shrink-0 text-ink-500 hover:text-red-400" onclick={() => (discarding = upload)}>
-            Discard
-          </button>
-        </li>
-      {/each}
-    </ul>
-  </section>
-{/if}
-
-{#if items.length}
-  {#if Number.isFinite(earliestExpiry)}
-    <p class="mt-6 rounded-lg border border-accent/40 bg-accent/5 px-3 py-2 text-sm text-ink-300">
-      You uploaded these earlier but never made a link. Create one within
-      {until(earliestExpiry)}, or they are deleted.
-    </p>
-  {/if}
-  <ul id="upload-list" class="mt-6 space-y-2">
-    {#each items as item (item.key)}
-      <li class="rounded-lg border border-ink-700 bg-ink-900 px-3 py-2">
-        <div class="flex items-center justify-between gap-3 text-sm">
-          <span class="truncate">{item.name}</span>
-          <span class="tnum shrink-0 text-xs text-ink-500">
-            {#if item.status === 'error'}
-              <span class="text-red-400">{item.error}</span>
-            {:else if item.status === 'done'}
-              {bytes(item.total)}
-            {:else}
-              {Math.floor((item.sent / Math.max(1, item.total)) * 100)}%
-            {/if}
-          </span>
-          {#if item.status === 'error' && item.handle && !item.overLimit}
-            <button class="shrink-0 text-xs text-accent hover:text-accent-dim" onclick={() => retry(item)}>
-              Retry
-            </button>
-          {/if}
-          <button class="shrink-0 text-xs text-ink-500 hover:text-ink-300" onclick={() => askRemove(item)}>
-            Remove
-          </button>
+        <!-- Two segments: what WeekendArchive holds, and what else is on the same volume.
+             Separating them makes it obvious whether a full disk is our doing. -->
+        <div class="mt-2 flex h-1.5 overflow-hidden rounded bg-ink-800" title="{bytes(disk.mine)} archive, {bytes(disk.others)} other">
+          <div class="h-full bg-accent" style="width: {disk.minePct}%"></div>
+          <div class="h-full bg-ink-700" style="width: {disk.othersPct}%"></div>
         </div>
-        {#if item.status === 'uploading'}
-          <div class="mt-2 h-1 overflow-hidden rounded bg-ink-800">
-            <div
-              class="h-full bg-accent transition-[width]"
-              style="width: {(item.sent / Math.max(1, item.total)) * 100}%"
-            ></div>
-          </div>
-        {/if}
-      </li>
-    {/each}
-  </ul>
 
-  {#if liveShares.length}
-    <label class="mt-6 block">
-      <span class="text-xs text-ink-500">Put these files in</span>
-      <select
-        bind:value={target}
-        class="mt-1 w-full rounded-lg border border-ink-700 bg-ink-900 px-3 py-2 text-sm outline-none focus:border-accent"
-      >
-        <option value={null}>A new link</option>
-        {#each liveShares as share (share.token)}
-          <option value={share.token}>
-            “{share.title || 'Untitled'}” · {share.file_count} file{share.file_count === 1 ? '' : 's'}
-          </option>
-        {/each}
-      </select>
-    </label>
-  {/if}
-
-  {#if targetShare}
-    <p class="mt-3 text-xs text-ink-500">
-      They join the link as it is: its address, expiry, visibility and password stay the same,
-      and everyone who has the link sees the new files.
-    </p>
-  {:else}
-    <div class="mt-6 grid gap-4 sm:grid-cols-2">
-      <label class="block sm:col-span-2">
-        <span class="text-xs text-ink-500">Title (optional)</span>
-        <input
-          bind:value={title}
-          placeholder="Saturday night"
-          class="mt-1 w-full rounded-lg border border-ink-700 bg-ink-900 px-3 py-2 text-sm outline-none focus:border-accent"
-        />
-      </label>
-      <label class="block">
-        <span class="text-xs text-ink-500">Expires after</span>
-        <select
-          bind:value={expiresDays}
-          class="mt-1 w-full rounded-lg border border-ink-700 bg-ink-900 px-3 py-2 text-sm outline-none focus:border-accent"
-        >
-          {#each expiryChoices as choice (choice.days)}
-            <option value={choice.days}>{choice.label}</option>
-          {/each}
-        </select>
-      </label>
-      <label class="block">
-        <span class="text-xs text-ink-500">Max downloads (optional)</span>
-        <input
-          bind:value={maxDownloads}
-          inputmode="numeric"
-          placeholder="unlimited"
-          class="mt-1 w-full rounded-lg border border-ink-700 bg-ink-900 px-3 py-2 text-sm outline-none focus:border-accent"
-        />
-      </label>
-      <label class="flex cursor-pointer items-start gap-3 rounded-lg border border-ink-700 bg-ink-900 px-3 py-2.5 sm:col-span-2">
-        <input type="checkbox" bind:checked={isPrivate} class="mt-0.5 accent-[#e0a458]" />
-        <span class="text-xs">
-          <span class="block text-ink-100">Private — members only</span>
-          <span class="mt-0.5 block text-ink-500">
-            {isPrivate
-              ? 'Only people with an account here can open the link.'
-              : 'Anyone with the link can open it, account or not.'}
-          </span>
-        </span>
-      </label>
-
-      <label class="block sm:col-span-2">
-        <span class="text-xs text-ink-500">Password (optional)</span>
-        <input
-          type="password"
-          bind:value={password}
-          autocomplete="new-password"
-          class="mt-1 w-full rounded-lg border border-ink-700 bg-ink-900 px-3 py-2 text-sm outline-none focus:border-accent"
-        />
-      </label>
-    </div>
-  {/if}
-
-  {#if error}
-    <p class="mt-4 rounded-lg bg-red-950/60 px-3 py-2 text-sm text-red-300">{error}</p>
-  {/if}
-
-  <button
-    disabled={busy || creating || ready.length === 0}
-    onclick={submit}
-    class="mt-4 w-full rounded-lg bg-accent px-3 py-2 text-sm font-medium text-ink-950 transition hover:bg-accent-dim disabled:opacity-40"
-  >
-    {#if busy}
-      Uploading…
-    {:else if creating}
-      {targetShare ? 'Adding…' : 'Creating link…'}
-    {:else if targetShare}
-      Add {ready.length} file{ready.length === 1 ? '' : 's'} to “{targetShare.title || 'Untitled'}” ({bytes(totalBytes)})
-    {:else}
-      Create link for {ready.length} file{ready.length === 1 ? '' : 's'} ({bytes(totalBytes)})
-    {/if}
-  </button>
-{/if}
-
-{#if added}
-  <p class="mt-6 rounded-xl border border-accent/40 bg-accent/5 px-4 py-3 text-sm text-ink-300">
-    Added {added.count} file{added.count === 1 ? '' : 's'} to “{added.title}”. Everyone who has
-    the link sees {added.count === 1 ? 'it' : 'them'} now.
-  </p>
-{/if}
-
-{#if created}
-  <div class="mt-6 rounded-xl border border-accent/40 bg-accent/5 p-4">
-    <p class="text-xs text-ink-500">
-      Link created — expires in {until(created.expires_at)} ·
-      {created.visibility === 'public' ? 'anyone with the link' : 'members only'}
-    </p>
-    <div class="mt-2 flex items-center gap-3">
-      <input
-        readonly
-        value={created.url}
-        class="flex-1 truncate rounded-lg border border-ink-700 bg-ink-950 px-3 py-2 text-sm text-accent"
-      />
-      <button
-        class="shrink-0 rounded-lg border border-ink-700 px-3 py-2 text-sm hover:border-ink-500"
-        onclick={() => copy(created!.url)}
-      >
-        {copied ? 'Copied' : 'Copy'}
-      </button>
-    </div>
-  </div>
-{/if}
-
-{#if inbox.items?.length}
-  <section class="mt-12">
-    <h2 class="text-sm font-medium text-ink-300">Shared with you</h2>
-    {#if inbox.error}
-      <p class="mt-2 text-xs text-red-400">{inbox.error}</p>
-    {/if}
-    <ul class="mt-3 space-y-3">
-      {#each inbox.items as item (item.id)}
-        <li
-          class="rounded-xl border px-4 py-3 {item.seen ? 'border-ink-800' : 'border-accent/40 bg-accent/5'}"
-        >
-          <div class="flex items-center justify-between gap-3">
-            <p class="flex min-w-0 items-center gap-2 text-xs text-ink-500">
-              <Avatar src={item.sender.avatar} name={item.sender.username} size="xs" />
-              <MemberName
-                username={item.sender.username}
-                displayName={item.sender.display_name}
-                role={item.sender.role}
-              />
-              <span class="tnum shrink-0">· {chatTime(item.sent_at)}</span>
-              {#if !item.seen}<span class="shrink-0 text-[10px] uppercase text-accent">new</span>{/if}
-            </p>
-            <button
-              onclick={() => inbox.dismiss(item.id)}
-              title="Remove from this list"
-              aria-label="Dismiss"
-              class="shrink-0 text-xs text-ink-500 hover:text-ink-300"
-            >Dismiss</button>
-          </div>
-          {#if item.note}
-            <!-- Plain text: another member wrote it. -->
-            <p class="mt-2 whitespace-pre-line break-words text-sm text-ink-300">{item.note}</p>
+        <p class="tnum mt-2 text-xs text-ink-500">
+          <span class="text-accent">■</span>
+          WeekendArchive {bytes(disk.mine)}
+          {#if storage}({storage.blob_count} file{storage.blob_count === 1 ? '' : 's'}){/if}
+          · <span class="text-ink-700">■</span> other {bytes(disk.others)}
+          {#if disk.saved > 0}
+            · deduplication saved {bytes(disk.saved)}
           {/if}
-          <div class="mt-2.5 flex flex-col gap-2">
-            {#each item.cards as card, i (i)}
-              <ShareCard {card} />
-            {/each}
-          </div>
-        </li>
-      {/each}
-    </ul>
-  </section>
-{/if}
+          {#if storage?.incoming_bytes}
+            · {bytes(storage.incoming_bytes)} uploading
+          {/if}
+        </p>
 
-{#if shares.length}
-  <section class="mt-12">
-    <h2 class="text-sm font-medium text-ink-300">Your links</h2>
-    <ul class="mt-3 divide-y divide-ink-800 rounded-xl border border-ink-800">
-      {#each shares as share (share.token)}
-        <li class="px-4 py-3">
-          <div class="flex items-center justify-between gap-3">
-            <div class="min-w-0">
-              <button
-                class="flex items-center gap-1.5 truncate text-sm hover:text-accent"
-                onclick={() => toggle(share.token)}
-              >
-                <span class="text-ink-500">{expanded === share.token ? '▾' : '▸'}</span>
-                {share.title || 'Untitled'}
-              </button>
-              <p class="tnum mt-0.5 text-xs text-ink-500">
-                {share.file_count} file{share.file_count === 1 ? '' : 's'} · {bytes(share.total_bytes)} ·
-                expires in {until(share.expires_at)} · {share.download_count} download{share.download_count ===
-                1
-                  ? ''
-                  : 's'}
-                {#if share.password_protected}· password{/if}
-              </p>
+        {#if storage?.my_usage !== undefined}
+          <div class="mt-3 border-t border-ink-800 pt-3">
+            <div class="flex items-baseline justify-between text-xs">
+              <span class="text-ink-300">Your space</span>
+              <span class="tnum text-ink-500">
+                {#if storage.my_limit}
+                  {bytes(storage.my_usage)} of {bytes(storage.my_limit)}
+                {:else}
+                  {bytes(storage.my_usage)} · no limit
+                {/if}
+              </span>
             </div>
-            <div class="flex shrink-0 items-center gap-3 text-xs">
-              <a href={`/d/${share.token}`} class="text-ink-500 hover:text-ink-300">Open</a>
-              <button class="text-ink-500 hover:text-ink-300" onclick={() => copy(share.url)}>Copy</button>
-              <VisibilityToggle
-                visibility={share.visibility}
-                endpoint={`/api/shares/${share.token}`}
-                onChanged={(next) => (share.visibility = next)}
-              />
-              <button class="text-ink-500 hover:text-red-400" onclick={() => (removing = share)}>
+            {#if storage.my_limit}
+              <div class="mt-2 h-1.5 overflow-hidden rounded bg-ink-800">
+                <div
+                  class="h-full {storage.my_usage / storage.my_limit > 0.9 ? 'bg-red-400' : 'bg-accent'}"
+                  style="width: {Math.min(100, (storage.my_usage / storage.my_limit) * 100)}%"
+                ></div>
+              </div>
+              <p class="mt-2 text-xs text-ink-500">
+                Each file counts once, however many of your links hold it. Links that expire or
+                are removed give their space back.
+              </p>
+            {/if}
+          </div>
+        {/if}
+      </section>
+    {/if}
+
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div
+      role="region"
+      aria-label="Drop files to upload"
+      class="mt-8 rounded-xl border-2 border-dashed p-10 text-center transition {dragging
+        ? 'border-accent bg-ink-900'
+        : 'border-ink-700'}"
+      ondragover={(e) => {
+        e.preventDefault()
+        dragging = true
+      }}
+      ondragleave={() => (dragging = false)}
+      ondrop={(e) => {
+        e.preventDefault()
+        dragging = false
+        if (e.dataTransfer?.files) enqueue(e.dataTransfer.files)
+      }}
+    >
+      <p class="text-sm text-ink-300">Drop files here</p>
+      <p class="mt-1 text-xs text-ink-500">or</p>
+      <label class="mt-3 inline-block cursor-pointer rounded-lg border border-ink-700 px-3 py-1.5 text-sm hover:border-ink-500">
+        Choose files
+        <input
+          bind:this={fileInput}
+          type="file"
+          multiple
+          class="hidden"
+          onchange={(e) => {
+            const input = e.currentTarget as HTMLInputElement
+            if (input.files) enqueue(input.files)
+            input.value = ''
+            // Chosen from a link further down: bring the upload list into view.
+            if (pickedForLink) document.getElementById('upload-list')?.scrollIntoView({ behavior: 'smooth' })
+            pickedForLink = false
+          }}
+        />
+      </label>
+    </div>
+
+    {#if unfinished.length}
+      <section class="mt-6 rounded-lg border border-ink-700 bg-ink-900 px-3 py-2.5 text-sm">
+        <p class="text-ink-300">
+          {unfinished.length === 1 ? 'An upload' : 'Some uploads'} stopped part-way. Choose the same
+          file again to continue from where it stopped.
+        </p>
+        <ul class="mt-2 space-y-1.5">
+          {#each unfinished as upload (upload.id)}
+            <li class="flex items-center justify-between gap-3 text-xs">
+              <span class="tnum min-w-0 truncate text-ink-300">
+                {upload.filename}
+                <span class="text-ink-500">
+                  · {Math.floor((upload.offset / Math.max(1, upload.size)) * 100)}% of {bytes(upload.size)} ·
+                  kept for {until(upload.expires_at)}
+                </span>
+              </span>
+              <button class="shrink-0 text-ink-500 hover:text-red-400" onclick={() => (discarding = upload)}>
+                Discard
+              </button>
+            </li>
+          {/each}
+        </ul>
+      </section>
+    {/if}
+
+    {#if items.length}
+      {#if Number.isFinite(earliestExpiry)}
+        <p class="mt-6 rounded-lg border border-accent/40 bg-accent/5 px-3 py-2 text-sm text-ink-300">
+          You uploaded these earlier but never made a link. Create one within
+          {until(earliestExpiry)}, or they are deleted.
+        </p>
+      {/if}
+      <ul id="upload-list" class="mt-6 space-y-2">
+        {#each items as item (item.key)}
+          <li class="rounded-lg border border-ink-700 bg-ink-900 px-3 py-2">
+            <div class="flex items-center justify-between gap-3 text-sm">
+              <span class="truncate">{item.name}</span>
+              <span class="tnum shrink-0 text-xs text-ink-500">
+                {#if item.status === 'error'}
+                  <span class="text-red-400">{item.error}</span>
+                {:else if item.status === 'done'}
+                  {bytes(item.total)}
+                {:else}
+                  {Math.floor((item.sent / Math.max(1, item.total)) * 100)}%
+                {/if}
+              </span>
+              {#if item.status === 'error' && item.handle && !item.overLimit}
+                <button class="shrink-0 text-xs text-accent hover:text-accent-dim" onclick={() => retry(item)}>
+                  Retry
+                </button>
+              {/if}
+              <button class="shrink-0 text-xs text-ink-500 hover:text-ink-300" onclick={() => askRemove(item)}>
                 Remove
               </button>
             </div>
-          </div>
+            {#if item.status === 'uploading'}
+              <div class="mt-2 h-1 overflow-hidden rounded bg-ink-800">
+                <div
+                  class="h-full bg-accent transition-[width]"
+                  style="width: {(item.sent / Math.max(1, item.total)) * 100}%"
+                ></div>
+              </div>
+            {/if}
+          </li>
+        {/each}
+      </ul>
 
-          {#if expanded === share.token}
-            {#if expanding}
-              <p class="mt-3 text-xs text-ink-500">Loading…</p>
-            {:else}
-              <ul class="mt-3 space-y-1 border-l border-ink-800 pl-3">
-                {#each expandedFiles as file (file.id)}
-                  <li class="flex items-center justify-between gap-3">
-                    <span class="tnum min-w-0 truncate text-xs text-ink-300">
-                      {file.filename}
-                      <span class="text-ink-500">· {bytes(file.size)}</span>
-                    </span>
-                    <button
-                      class="shrink-0 text-xs text-ink-500 hover:text-red-400"
-                      title="Remove this file from the share"
-                      onclick={() =>
-                        (removingFile = { share, file, last: expandedFiles.length === 1 })}
-                    >
-                      Remove
-                    </button>
-                  </li>
-                {/each}
-              </ul>
-              {#if expandedFiles.length === 1}
-                <p class="mt-2 text-xs text-ink-500">
-                  Removing the last file removes the link.
+      {#if liveShares.length}
+        <label class="mt-6 block">
+          <span class="text-xs text-ink-500">Put these files in</span>
+          <select
+            bind:value={target}
+            class="mt-1 w-full rounded-lg border border-ink-700 bg-ink-900 px-3 py-2 text-sm outline-none focus:border-accent"
+          >
+            <option value={null}>A new link</option>
+            {#each liveShares as share (share.token)}
+              <option value={share.token}>
+                “{share.title || 'Untitled'}” · {share.file_count} file{share.file_count === 1 ? '' : 's'}
+              </option>
+            {/each}
+          </select>
+        </label>
+      {/if}
+
+      {#if targetShare}
+        <p class="mt-3 text-xs text-ink-500">
+          They join the link as it is: its address, expiry, visibility and password stay the same,
+          and everyone who has the link sees the new files.
+        </p>
+      {:else}
+        <div class="mt-6 grid gap-4 sm:grid-cols-2">
+          <label class="block sm:col-span-2">
+            <span class="text-xs text-ink-500">Title (optional)</span>
+            <input
+              bind:value={title}
+              placeholder="Saturday night"
+              class="mt-1 w-full rounded-lg border border-ink-700 bg-ink-900 px-3 py-2 text-sm outline-none focus:border-accent"
+            />
+          </label>
+          <label class="block">
+            <span class="text-xs text-ink-500">Expires after</span>
+            <select
+              bind:value={expiresDays}
+              class="mt-1 w-full rounded-lg border border-ink-700 bg-ink-900 px-3 py-2 text-sm outline-none focus:border-accent"
+            >
+              {#each expiryChoices as choice (choice.days)}
+                <option value={choice.days}>{choice.label}</option>
+              {/each}
+            </select>
+          </label>
+          <label class="block">
+            <span class="text-xs text-ink-500">Max downloads (optional)</span>
+            <input
+              bind:value={maxDownloads}
+              inputmode="numeric"
+              placeholder="unlimited"
+              class="mt-1 w-full rounded-lg border border-ink-700 bg-ink-900 px-3 py-2 text-sm outline-none focus:border-accent"
+            />
+          </label>
+          <label class="flex cursor-pointer items-start gap-3 rounded-lg border border-ink-700 bg-ink-900 px-3 py-2.5 sm:col-span-2">
+            <input type="checkbox" bind:checked={isPrivate} class="mt-0.5 accent-[#e0a458]" />
+            <span class="text-xs">
+              <span class="block text-ink-100">Private — members only</span>
+              <span class="mt-0.5 block text-ink-500">
+                {isPrivate
+                  ? 'Only people with an account here can open the link.'
+                  : 'Anyone with the link can open it, account or not.'}
+              </span>
+            </span>
+          </label>
+
+          <label class="block sm:col-span-2">
+            <span class="text-xs text-ink-500">Password (optional)</span>
+            <input
+              type="password"
+              bind:value={password}
+              autocomplete="new-password"
+              class="mt-1 w-full rounded-lg border border-ink-700 bg-ink-900 px-3 py-2 text-sm outline-none focus:border-accent"
+            />
+          </label>
+        </div>
+      {/if}
+
+      {#if error}
+        <p class="mt-4 rounded-lg bg-red-950/60 px-3 py-2 text-sm text-red-300">{error}</p>
+      {/if}
+
+      <button
+        disabled={busy || creating || ready.length === 0}
+        onclick={submit}
+        class="mt-4 w-full rounded-lg bg-accent px-3 py-2 text-sm font-medium text-ink-950 transition hover:bg-accent-dim disabled:opacity-40"
+      >
+        {#if busy}
+          Uploading…
+        {:else if creating}
+          {targetShare ? 'Adding…' : 'Creating link…'}
+        {:else if targetShare}
+          Add {ready.length} file{ready.length === 1 ? '' : 's'} to “{targetShare.title || 'Untitled'}” ({bytes(totalBytes)})
+        {:else}
+          Create link for {ready.length} file{ready.length === 1 ? '' : 's'} ({bytes(totalBytes)})
+        {/if}
+      </button>
+    {/if}
+
+    {#if added}
+      <p class="mt-6 rounded-xl border border-accent/40 bg-accent/5 px-4 py-3 text-sm text-ink-300">
+        Added {added.count} file{added.count === 1 ? '' : 's'} to “{added.title}”. Everyone who has
+        the link sees {added.count === 1 ? 'it' : 'them'} now.
+      </p>
+    {/if}
+
+    {#if created}
+      <div class="mt-6 rounded-xl border border-accent/40 bg-accent/5 p-4">
+        <p class="text-xs text-ink-500">
+          Link created — expires in {until(created.expires_at)} ·
+          {created.visibility === 'public' ? 'anyone with the link' : 'members only'}
+        </p>
+        <div class="mt-2 flex items-center gap-3">
+          <input
+            readonly
+            value={created.url}
+            class="flex-1 truncate rounded-lg border border-ink-700 bg-ink-950 px-3 py-2 text-sm text-accent"
+          />
+          <button
+            class="shrink-0 rounded-lg border border-ink-700 px-3 py-2 text-sm hover:border-ink-500"
+            onclick={() => copy(created!.url)}
+          >
+            {copied ? 'Copied' : 'Copy'}
+          </button>
+        </div>
+      </div>
+    {/if}
+  </div>
+  <div class="min-w-0 lg:[&>section:first-child]:mt-6">
+    {#if inbox.items?.length}
+      <section class="mt-12">
+        <h2 class="text-sm font-medium text-ink-300">Shared with you</h2>
+        {#if inbox.error}
+          <p class="mt-2 text-xs text-red-400">{inbox.error}</p>
+        {/if}
+        <ul class="mt-3 space-y-3">
+          {#each inbox.items as item (item.id)}
+            <li
+              class="rounded-xl border px-4 py-3 {item.seen ? 'border-ink-800' : 'border-accent/40 bg-accent/5'}"
+            >
+              <div class="flex items-center justify-between gap-3">
+                <p class="flex min-w-0 items-center gap-2 text-xs text-ink-500">
+                  <Avatar src={item.sender.avatar} name={item.sender.username} size="xs" />
+                  <MemberName
+                    username={item.sender.username}
+                    displayName={item.sender.display_name}
+                    role={item.sender.role}
+                  />
+                  <span class="tnum shrink-0">· {chatTime(item.sent_at)}</span>
+                  {#if !item.seen}<span class="shrink-0 text-[10px] uppercase text-accent">new</span>{/if}
                 </p>
+                <button
+                  onclick={() => inbox.dismiss(item.id)}
+                  title="Remove from this list"
+                  aria-label="Dismiss"
+                  class="shrink-0 text-xs text-ink-500 hover:text-ink-300"
+                >Dismiss</button>
+              </div>
+              {#if item.note}
+                <!-- Plain text: another member wrote it. -->
+                <p class="mt-2 whitespace-pre-line break-words text-sm text-ink-300">{item.note}</p>
               {/if}
-              {#if expandedDownloads}
-                <div class="mt-4 border-t border-ink-800 pt-3 text-xs">
-                  <p class="text-ink-500">Downloaded by</p>
-                  {#if expandedDownloads.people.length === 0 && expandedDownloads.anonymous.downloads === 0}
-                    <p class="mt-1.5 text-ink-500">No one but you yet.</p>
-                  {/if}
-                  <ul class="mt-1.5 space-y-2">
-                    {#each expandedDownloads.people as person (person.username)}
-                      <li class="flex items-start gap-2">
-                        <Avatar src={person.avatar} name={person.username} size="xs" />
-                        <div class="min-w-0">
-                          <p class="flex flex-wrap items-baseline gap-x-1.5">
-                            <MemberName
-                              username={person.username}
-                              displayName={person.display_name}
-                              role={person.role}
-                            />
-                            <span class="tnum text-ink-500">
-                              · {person.downloads} download{person.downloads === 1 ? '' : 's'} · {chatTime(person.last_at)}
-                            </span>
-                          </p>
-                          <p class="truncate text-ink-500">{took(person.files)}</p>
-                        </div>
+              <div class="mt-2.5 flex flex-col gap-2">
+                {#each item.cards as card, i (i)}
+                  <ShareCard {card} />
+                {/each}
+              </div>
+            </li>
+          {/each}
+        </ul>
+      </section>
+    {/if}
+
+    {#if shares.length}
+      <section class="mt-12">
+        <h2 class="text-sm font-medium text-ink-300">Your links</h2>
+        <ul class="mt-3 divide-y divide-ink-800 rounded-xl border border-ink-800">
+          {#each shares as share (share.token)}
+            <li class="px-4 py-3">
+              <!-- Actions under the details on a phone, beside them from sm. -->
+              <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+                <div class="min-w-0">
+                  <button
+                    class="flex items-center gap-1.5 truncate text-sm hover:text-accent"
+                    onclick={() => toggle(share.token)}
+                  >
+                    <span class="text-ink-500">{expanded === share.token ? '▾' : '▸'}</span>
+                    {share.title || 'Untitled'}
+                  </button>
+                  <p class="tnum mt-0.5 text-xs text-ink-500">
+                    {share.file_count} file{share.file_count === 1 ? '' : 's'} · {bytes(share.total_bytes)} ·
+                    expires in {until(share.expires_at)} · {share.download_count} download{share.download_count ===
+                    1
+                      ? ''
+                      : 's'}
+                    {#if share.password_protected}· password{/if}
+                  </p>
+                </div>
+                <div class="flex shrink-0 items-center gap-3 text-xs">
+                  <a href={`/d/${share.token}`} class="text-ink-500 hover:text-ink-300">Open</a>
+                  <button class="text-ink-500 hover:text-ink-300" onclick={() => copy(share.url)}>Copy</button>
+                  <VisibilityToggle
+                    visibility={share.visibility}
+                    endpoint={`/api/shares/${share.token}`}
+                    onChanged={(next) => (share.visibility = next)}
+                  />
+                  <button class="text-ink-500 hover:text-red-400" onclick={() => (removing = share)}>
+                    Remove
+                  </button>
+                </div>
+              </div>
+
+              {#if expanded === share.token}
+                {#if expanding}
+                  <p class="mt-3 text-xs text-ink-500">Loading…</p>
+                {:else}
+                  <ul class="mt-3 space-y-1 border-l border-ink-800 pl-3">
+                    {#each expandedFiles as file (file.id)}
+                      <li class="flex items-center justify-between gap-3">
+                        <span class="tnum min-w-0 truncate text-xs text-ink-300">
+                          {file.filename}
+                          <span class="text-ink-500">· {bytes(file.size)}</span>
+                        </span>
+                        <button
+                          class="shrink-0 text-xs text-ink-500 hover:text-red-400"
+                          title="Remove this file from the share"
+                          onclick={() =>
+                            (removingFile = { share, file, last: expandedFiles.length === 1 })}
+                        >
+                          Remove
+                        </button>
                       </li>
                     {/each}
-                    {#if expandedDownloads.anonymous.downloads > 0}
-                      <li class="tnum text-ink-500">
-                        {expandedDownloads.anonymous.downloads} download{expandedDownloads.anonymous.downloads === 1
-                          ? ''
-                          : 's'} by people who were not signed in{#if expandedDownloads.anonymous.last_at}{' '}·
-                          last {chatTime(expandedDownloads.anonymous.last_at)}{/if}
-                      </li>
-                    {/if}
                   </ul>
-                </div>
+                  {#if expandedFiles.length === 1}
+                    <p class="mt-2 text-xs text-ink-500">
+                      Removing the last file removes the link.
+                    </p>
+                  {/if}
+                  {#if expandedDownloads}
+                    <div class="mt-4 border-t border-ink-800 pt-3 text-xs">
+                      <p class="text-ink-500">Downloaded by</p>
+                      {#if expandedDownloads.people.length === 0 && expandedDownloads.anonymous.downloads === 0}
+                        <p class="mt-1.5 text-ink-500">No one but you yet.</p>
+                      {/if}
+                      <ul class="mt-1.5 space-y-2">
+                        {#each expandedDownloads.people as person (person.username)}
+                          <li class="flex items-start gap-2">
+                            <Avatar src={person.avatar} name={person.username} size="xs" />
+                            <div class="min-w-0">
+                              <p class="flex flex-wrap items-baseline gap-x-1.5">
+                                <MemberName
+                                  username={person.username}
+                                  displayName={person.display_name}
+                                  role={person.role}
+                                />
+                                <span class="tnum text-ink-500">
+                                  · {person.downloads} download{person.downloads === 1 ? '' : 's'} · {chatTime(person.last_at)}
+                                </span>
+                              </p>
+                              <p class="truncate text-ink-500">{took(person.files)}</p>
+                            </div>
+                          </li>
+                        {/each}
+                        {#if expandedDownloads.anonymous.downloads > 0}
+                          <li class="tnum text-ink-500">
+                            {expandedDownloads.anonymous.downloads} download{expandedDownloads.anonymous.downloads === 1
+                              ? ''
+                              : 's'} by people who were not signed in{#if expandedDownloads.anonymous.last_at}{' '}·
+                              last {chatTime(expandedDownloads.anonymous.last_at)}{/if}
+                          </li>
+                        {/if}
+                      </ul>
+                    </div>
+                  {/if}
+                  {#if liveShares.some((s) => s.token === share.token)}
+                    <button
+                      class="mt-3 rounded-lg border border-ink-700 px-2.5 py-1 text-xs hover:border-ink-500"
+                      onclick={() => addFilesTo(share.token)}
+                    >Add files</button>
+                  {/if}
+                  <ExpiryEditor
+                    token={share.token}
+                    expiresAt={share.expires_at}
+                    onChanged={(next) => (share.expires_at = next)}
+                  />
+                {/if}
               {/if}
-              {#if liveShares.some((s) => s.token === share.token)}
-                <button
-                  class="mt-3 rounded-lg border border-ink-700 px-2.5 py-1 text-xs hover:border-ink-500"
-                  onclick={() => addFilesTo(share.token)}
-                >Add files</button>
-              {/if}
-              <ExpiryEditor
-                token={share.token}
-                expiresAt={share.expires_at}
-                onChanged={(next) => (share.expires_at = next)}
-              />
-            {/if}
-          {/if}
-        </li>
-      {/each}
-    </ul>
-  </section>
-{/if}
+            </li>
+          {/each}
+        </ul>
+      </section>
+    {/if}
+  </div>
+</div>
 
 {#if removing}
   <Confirm

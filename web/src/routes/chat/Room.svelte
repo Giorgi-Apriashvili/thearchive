@@ -188,7 +188,9 @@
   const canInvite = $derived(room.is_creator || me.role === 'admin')
 </script>
 
-<div class="flex h-[34rem] flex-col rounded-xl border border-ink-800">
+<!-- Fixed height on phones, where the page scrolls; from md, the window's height less the
+     header above it, so the conversation uses the screen rather than a box within it. -->
+<div class="flex h-[34rem] flex-col rounded-xl border border-ink-800 md:h-[calc(100dvh-15rem)] md:min-h-[28rem]">
   <header class="relative flex items-center justify-between gap-3 border-b border-ink-800 px-4 py-2.5">
     <div class="min-w-0">
       <h2 class="truncate text-sm text-ink-100">{room.name}</h2>
@@ -277,7 +279,8 @@
                that Svelte keeps escaping both the text and the href — this is the one
                place in the app where another person's arbitrary text reaches the DOM. -->
           {#if message.body}
-          <p class="mt-0.5 whitespace-pre-wrap break-words text-sm text-ink-100">
+          <!-- 70ch: past that, lines get hard to follow, however wide the window. -->
+          <p class="mt-0.5 max-w-[70ch] whitespace-pre-wrap text-sm text-ink-100 [overflow-wrap:anywhere]">
             {#each parseMessage(message.body ?? '', message.mentions ?? []) as segment}{#if segment.href}<a
                   href={segment.href}
                   target="_blank"

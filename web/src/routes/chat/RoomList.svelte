@@ -78,7 +78,7 @@
 {:else if ordered.length === 0}
   <p class="mt-4 text-xs text-ink-500">No rooms yet. Make the first one.</p>
 {:else}
-  <ul class="mt-3 max-h-[28rem] space-y-1 overflow-y-auto pr-1">
+  <ul class="mt-3 max-h-[28rem] space-y-1 overflow-y-auto pr-1 md:max-h-[calc(100dvh-19rem)]">
     {#each ordered as room (room.id)}
       {@const mine = room.state === 'member'}
       <li>

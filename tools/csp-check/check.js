@@ -146,7 +146,8 @@ const PASS = 'correct-horse-battery'
   await step('chat: member popover (fade transition)', async () => {
     // The header's count is the toggle; the room list shows the same text as plain info.
     await page.locator('button[aria-expanded]').click()
-    await page.getByText('creator').waitFor()
+    // Within the popover: on a wide window the members panel says "creator" as well.
+    await page.getByRole('group', { name: /^Members of / }).getByText('creator').waitFor()
     await page.keyboard.press('Escape')
   })
 

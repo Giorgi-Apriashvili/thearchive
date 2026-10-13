@@ -22,9 +22,11 @@
     class="block max-w-sm rounded-xl border border-ink-700 bg-ink-900 p-3 transition hover:border-accent/60"
   >
     {#if card.previews?.length}
-      <div class="mb-2.5 flex gap-1.5">
+      <!-- Four columns that shrink with the card, so a narrow phone does not crop the
+           last preview; never larger than 4rem each. -->
+      <div class="mb-2.5 grid max-w-[16.75rem] grid-cols-4 gap-1.5">
         {#each card.previews as preview (preview)}
-          <img src={preview} alt="" loading="lazy" class="h-16 w-16 rounded-md bg-ink-800 object-cover" />
+          <img src={preview} alt="" loading="lazy" class="aspect-square w-full rounded-md bg-ink-800 object-cover" />
         {/each}
       </div>
     {/if}

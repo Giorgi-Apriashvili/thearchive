@@ -75,7 +75,7 @@
   )
 </script>
 
-<div class="mx-auto max-w-2xl px-4 py-16">
+<div class="mx-auto max-w-2xl px-4 py-16 lg:max-w-5xl 2xl:max-w-7xl">
   <a href="/" class="wordmark text-xl text-ink-300 transition hover:text-ink-100">Weekend<em>Archive</em></a>
 
   {#if loading}
@@ -138,16 +138,22 @@
       </a>
     {/if}
 
-    <ul class="mt-4 divide-y divide-ink-800 rounded-xl border border-ink-800">
+    <!-- A list on phones; from lg a gallery, where a photo set is mostly looked at before
+         anything is downloaded and a 44px thumbnail wastes the width. -->
+    <ul
+      class="mt-4 divide-y divide-ink-800 rounded-xl border border-ink-800 lg:grid lg:grid-cols-3 lg:gap-3 lg:divide-y-0 lg:border-0 2xl:grid-cols-4"
+    >
       {#each share.files as file (file.id)}
-        <li class="flex items-center justify-between gap-3 px-4 py-3">
+        <li
+          class="flex items-center justify-between gap-3 px-4 py-3 lg:flex-col lg:items-stretch lg:rounded-xl lg:border lg:border-ink-800 lg:p-3"
+        >
           {#if file.preview}
             <!-- The thumbnail is the preview button: it is the affordance people
                  actually reach for, and a 320px WebP is ~25 KB against an 8 MB original. -->
             <button
               onclick={() => openViewer(file.id)}
               aria-label={`Preview ${file.filename}`}
-              class="relative size-11 shrink-0 overflow-hidden rounded-lg border border-ink-700 bg-ink-900 transition hover:border-accent"
+              class="relative size-11 shrink-0 overflow-hidden rounded-lg border border-ink-700 bg-ink-900 transition hover:border-accent lg:aspect-[4/3] lg:size-auto lg:w-full"
             >
               {#if file.preview === 'image'}
                 <img
@@ -162,7 +168,7 @@
             </button>
           {:else}
             <span
-              class="flex size-11 shrink-0 items-center justify-center rounded-lg border border-ink-800 text-xs text-ink-700"
+              class="flex size-11 shrink-0 items-center justify-center rounded-lg border border-ink-800 text-xs text-ink-700 lg:aspect-[4/3] lg:size-auto lg:w-full"
               aria-hidden="true">—</span
             >
           {/if}
@@ -179,7 +185,7 @@
           <a
             href={downloadUrl(file.id)}
             download={file.filename}
-            class="shrink-0 rounded-lg border border-ink-700 px-3 py-1.5 text-sm hover:border-accent hover:text-accent"
+            class="shrink-0 rounded-lg border border-ink-700 px-3 py-1.5 text-sm hover:border-accent hover:text-accent lg:text-center"
           >
             Download
           </a>
