@@ -731,6 +731,30 @@ curl -s -o /dev/null -b "$JAR" -X DELETE "$BASE/api/shares/$WHO"
 gcwait
 check "removing the link deletes who downloaded it" "$(sql "SELECT COUNT(*) FROM share_downloads WHERE share_id = $WHO_ID;")" "0"
 
+echo "=== deleting an account deletes its files ==="
+# Its links cascade with it, and a cascade decrements no refcount: the account's files
+# have to be released explicitly, or they stay on disk for good.
+INVL=$(curl -s -b "$JAR" -X POST "$BASE/api/invites" | jget code)
+LEAVER=$(mktemp)
+curl -s -o /dev/null -c "$LEAVER" -X POST "$BASE/api/auth/register" -H 'Content-Type: application/json' \
+    -d "{\"invite\":\"$INVL\",\"username\":\"leaver\",\"password\":\"correct-horse-battery\"}"
+head -c 9000 /dev/urandom > "$WORK/only-theirs.bin"; head -c 9000 /dev/urandom > "$WORK/both.bin"
+ONLY=$(sha256sum < "$WORK/only-theirs.bin" | cut -d' ' -f1); BOTH=$(sha256sum < "$WORK/both.bin" | cut -d' ' -f1)
+curl -s -o /dev/null -b "$LEAVER" -X POST "$BASE/api/shares" -H 'Content-Type: application/json' \
+    -d "{\"uploads\":[\"$(JAR="$LEAVER" upload "$WORK/only-theirs.bin")\",\"$(JAR="$LEAVER" upload "$WORK/both.bin")\"]}"
+KEEP=$(curl -s -b "$JAR" -X POST "$BASE/api/shares" -H 'Content-Type: application/json' \
+    -d "{\"uploads\":[\"$(upload "$WORK/both.bin")\"],\"title\":\"Kept\"}" | jget token)
+LEAVER_ID=$(sql "SELECT id FROM users WHERE username='leaver';")
+check "an account whose files are still stored can be deleted" \
+    "$(curl -s -o /dev/null -w '%{http_code}' -b "$JAR" -X DELETE "$BASE/api/admin/users/$LEAVER_ID")" "200"
+rm -f "$LEAVER"
+gcwait
+check "a file only they held leaves the disk" \
+    "$([ -f "$DATA/blobs/${ONLY:0:2}/${ONLY:2:2}/$ONLY" ] && echo kept || echo gone)" "gone"
+check "one also in someone else's link stays" \
+    "$([ -f "$DATA/blobs/${BOTH:0:2}/${BOTH:2:2}/$BOTH" ] && echo kept || echo gone),$(sql "SELECT refcount FROM blobs WHERE sha256='$BOTH';")" "kept,1"
+curl -s -o /dev/null -b "$JAR" -X DELETE "$BASE/api/shares/$KEEP"
+
 echo "=== tus termination ==="
 head -c 131072 /dev/urandom > "$WORK/cancel.bin"
 CANCEL=$(sha256sum "$WORK/cancel.bin" | cut -d' ' -f1)

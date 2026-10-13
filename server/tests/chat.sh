@@ -472,6 +472,56 @@ check "members show how far each has read" \
     "[('alice', False), ('bob', True)]"
 
 echo
+echo "=== photos posted straight into chat ==="
+HERE=$(cd "$(dirname "$0")" && pwd)
+hdr() { local k; k=$(printf '%s' "$1" | tr 'A-Z' 'a-z'); tr -d '\r' | awk -v k="$k:" 'tolower($1)==k {print $2; exit}'; }
+# Uploads <file> as <jar>; echoes the upload id.
+tusup() {
+    local size loc
+    size=$(stat -c%s "$2")
+    loc=$(curl -s -D - -o /dev/null -b "$1" -X POST "$BASE/files" -H "Upload-Length: $size" \
+          -H "Upload-Metadata: filename $(printf '%s' "$(basename "$2")" | base64 -w0)" | hdr Location)
+    curl -s -o /dev/null -b "$1" -X PATCH "$BASE$loc" -H 'Content-Type: application/offset+octet-stream' \
+        -H 'Upload-Offset: 0' --data-binary "@$2"
+    printf '%s' "${loc##*/}"
+}
+python3 "$HERE/img.py" png 320 240 > "$WORK/one.png"
+python3 "$HERE/img.py" png 200 200 > "$WORK/two.png"
+head -c 3000 /dev/urandom > "$WORK/notes.bin"
+PH=$(as "$ALICE" POST /api/chat/rooms '{"name":"Photo room"}' | jf id)
+as "$ALICE" POST "/api/chat/rooms/$PH/invite" '{"username":"bob"}' >/dev/null
+as "$BOB" POST "/api/chat/rooms/$PH/respond" '{"action":"accept"}' >/dev/null
+P1=$(tusup "$BOB" "$WORK/one.png"); P2=$(tusup "$BOB" "$WORK/two.png")
+PM=$(as "$BOB" POST "/api/chat/rooms/$PH/messages" "{\"body\":\"from the ridge\",\"photos\":[\"$P1\",\"$P2\"]}" | jf id)
+check "photos post with a message" "$([ -n "$PM" ] && echo yes)" "yes"
+card() { as "$1" GET "/api/chat/rooms/$PH/messages" | py "import sys,json;m=[x for x in json.load(sys.stdin)['messages'] if x['id']==$PM][0];c=m['shares'][0];print($2)"; }
+check "shown inline, every photo listed" "$(card "$ALICE" "c['inline'], c['state'], len(c['photos'])")" "True live 2"
+PTOK=$(card "$ALICE" "c['token']")
+THUMB=$(card "$ALICE" "c['photos'][0]['thumb']")
+check "the photos are served to members" "$(curl -s -o /dev/null -w '%{http_code}' -b "$ALICE" "$BASE$THUMB")" "200"
+check "the link is members-only and never expires" \
+    "$(sql "SELECT visibility, expires_at FROM shares WHERE token='$PTOK';")" "private|253402300799"
+check "and not to anyone without an account" "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/shares/$PTOK")" "401"
+check "a photo-only message is fine" \
+    "$(code "$BOB" POST "/api/chat/rooms/$PH/messages" "{\"photos\":[\"$(tusup "$BOB" "$WORK/one.png")\"]}")" "201"
+check "a file that is not a photo is refused" \
+    "$(code "$BOB" POST "/api/chat/rooms/$PH/messages" "{\"photos\":[\"$(tusup "$BOB" "$WORK/notes.bin")\"]}")" "400"
+check "and sends nothing" "$(sql "SELECT COUNT(*) FROM messages WHERE room_id=$PH;")" "2"
+check "someone else's upload is refused" \
+    "$(code "$ALICE" POST "/api/chat/rooms/$PH/messages" "{\"photos\":[\"$(tusup "$BOB" "$WORK/two.png")\"]}")" "400"
+check "so is more than twenty" \
+    "$(code "$BOB" POST "/api/chat/rooms/$PH/messages" "{\"photos\":$(py "print(['x']*21)" | tr "'" '"')}")" "400"
+check "they count against the poster's space" \
+    "$(curl -s -b "$BOB" "$BASE/api/storage" | py "import sys,json;print(json.load(sys.stdin)['my_usage'] > 0)")" "True"
+check "removing the message takes its photos" \
+    "$(code "$BOB" DELETE "/api/chat/messages/$PM"),$(sql "SELECT deleted_at IS NOT NULL FROM shares WHERE token='$PTOK';")" "200,1"
+OTHERPH=$(tusup "$BOB" "$WORK/two.png")
+PM2=$(as "$BOB" POST "/api/chat/rooms/$PH/messages" "{\"photos\":[\"$OTHERPH\"]}" | jf id)
+PTOK2=$(sql "SELECT s.token FROM message_shares ms JOIN shares s ON s.id=ms.share_id WHERE ms.message_id=$PM2;")
+check "deleting the room takes the photos posted in it" \
+    "$(code "$ALICE" DELETE "/api/chat/rooms/$PH"),$(sql "SELECT deleted_at IS NOT NULL FROM shares WHERE token='$PTOK2';")" "200,1"
+
+echo
 echo "=== declining ==="
 as "$ALICE" POST "/api/chat/rooms/$ROOM/invite" '{"username":"carol"}' >/dev/null
 check "carol declines" \

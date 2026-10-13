@@ -139,13 +139,42 @@ void registerAdminRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
                     }
                     requireAnotherAdminRemains(db, userId);
                     const std::string target = userLabel(db, userId);
-                    // Shares and sessions cascade. Their blobs drop to refcount zero and
-                    // leave on the normal sweep, so nothing is unlinked inline here.
+                    // Shares and sessions cascade; their blobs are released below so the
+                    // normal sweep collects them, and nothing is unlinked inline here.
+                    // Two columns name who first uploaded a file and who added it to a
+                    // link. They were declared without ON DELETE, and SQLite cannot change
+                    // that without rebuilding the tables, so deleting anyone whose file is
+                    // still stored failed outright. They are attribution only: cleared here,
+                    // in the same transaction as the delete.
+                    Transaction tx{db};
+                    // Their links cascade away with the account, and their file rows with
+                    // them — but a blob is only collected once its refcount reaches zero,
+                    // and a cascade decrements nothing. So release them here first, as the
+                    // sweep releases an expired link: one reference off per file row, and
+                    // released_at set so the sweep takes the blob without a grace period.
+                    // Without this a deleted account's files stayed on disk for good.
+                    const std::int64_t now = nowSeconds();
+                    auto release = db.prepare(
+                        "UPDATE blobs SET released_at = ?1, refcount = MAX(0, refcount - ("
+                        "  SELECT COUNT(*) FROM share_files sf JOIN shares s ON s.id = sf.share_id"
+                        "  WHERE sf.blob_sha256 = blobs.sha256 AND s.owner_id = ?2"
+                        "    AND s.released_at IS NULL)) "
+                        "WHERE sha256 IN (SELECT sf.blob_sha256 FROM share_files sf "
+                        "  JOIN shares s ON s.id = sf.share_id "
+                        "  WHERE s.owner_id = ?2 AND s.released_at IS NULL)");
+                    release.bind(1, now).bind(2, userId).run();
+                    auto unattribute = db.prepare(
+                        "UPDATE blobs SET first_uploader = NULL WHERE first_uploader = ?");
+                    unattribute.bind(1, userId).run();
+                    auto unattributeFiles = db.prepare(
+                        "UPDATE share_files SET uploaded_by = NULL WHERE uploaded_by = ?");
+                    unattributeFiles.bind(1, userId).run();
                     auto del = db.prepare("DELETE FROM users WHERE id = ?");
                     del.bind(1, userId).run();
                     if (db.changes() == 0) {
                         throw HttpError{404, "no such user"};
                     }
+                    tx.commit();
                     LOG_WARN << "admin " << actor.username << " deleted user " << userId;
                     activity::record(req, actor, "admin.user_deleted", target);
                     Json::Value out;

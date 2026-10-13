@@ -206,6 +206,20 @@ const PASS = 'correct-horse-battery'
     await target.getByText('Pinned by alice').waitFor()
   })
 
+  await step('chat: post a photo straight in, open it in the viewer', async () => {
+    await page.setInputFiles('input[type=file][accept="image/*,video/*"]', PHOTO)
+    const chips = page.getByRole('list', { name: 'Photos to send' })
+    await chips.waitFor()
+    await page.waitForFunction(() => !document.querySelector('[aria-label="Photos to send"]')?.textContent?.includes('%'))
+    await page.getByPlaceholder('Message CSP test').fill('one from the trip')
+    await page.getByRole('button', { name: 'Send' }).click()
+    const message = page.locator('.group', { hasText: 'one from the trip' }).first()
+    await message.getByRole('button', { name: 'Open photo' }).click()
+    await page.getByRole('button', { name: 'Close preview' }).waitFor() // the viewer is open
+    await page.keyboard.press('Escape')
+    await page.getByRole('button', { name: 'Close preview' }).waitFor({ state: 'detached' })
+  })
+
   await step('chat: edit your own message', async () => {
     const message = page.locator('.group', { hasText: 'see https://example.com' }).first()
     await message.hover()
@@ -305,7 +319,8 @@ const PASS = 'correct-horse-battery'
 
   await step('chat: messages with a picture and a display name', async () => {
     await page.goto('/chat')
-    await page.getByText('CSP test').first().click()
+    // The room in the list — not the "Photos in “CSP test”" link the photo step made.
+    await page.getByRole('button', { name: /^CSP test/ }).click()
     await page.getByText('Alice Admin').first().waitFor()
     await page.waitForFunction(() =>
       [...document.images].some((i) => i.src.includes('/api/avatars/') && i.complete && i.naturalWidth > 0),

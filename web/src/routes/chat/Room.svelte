@@ -1,5 +1,15 @@
 <script lang="ts">
-  import { api, ApiError, type ChatMessage, type ChatRoom, type Me, type ShareSummary } from '../../lib/api'
+  import {
+    api,
+    ApiError,
+    type ChatMessage,
+    type ChatRoom,
+    type Me,
+    type ShareCard as ShareCardData,
+    type ShareDetail,
+    type ShareFile,
+    type ShareSummary,
+  } from '../../lib/api'
   import { chat } from '../../lib/chat.svelte'
   import { chatTime, clockTime, dayKey, dayLabel } from '../../lib/format'
   import { parseBlocks, type Segment } from '../../lib/message'
@@ -13,6 +23,10 @@
   import Members from './Members.svelte'
   import RoomSettings from './RoomSettings.svelte'
   import EmojiPicker from './EmojiPicker.svelte'
+  import PhotoGrid from './PhotoGrid.svelte'
+  import Lightbox from '../../lib/Lightbox.svelte'
+  import { uploading } from '../../lib/uploading.svelte'
+  import * as tus from 'tus-js-client'
   import { router } from '../../lib/router.svelte'
   import { tick } from 'svelte'
 
@@ -160,6 +174,129 @@
 
   let showEmoji = $state(false)
 
+  // ---- photos straight into chat -----------------------------------------------
+  // Uploaded as soon as they are chosen, pasted or dropped, so sending only has to wait
+  // for what is still going. On send the server makes them into a members-only link of
+  // the sender's, shown inline, that lasts as long as the message.
+  interface PendingPhoto {
+    key: number
+    name: string
+    total: number
+    sent: number
+    uploadId: string | null
+    status: 'uploading' | 'done' | 'error'
+    error?: string
+    handle?: tus.Upload
+    inFlight: boolean
+  }
+  const MAX_PHOTOS = 20
+  let photos = $state<PendingPhoto[]>([])
+  let photoKey = 0
+  let photoInput = $state<HTMLInputElement | null>(null)
+  let dragOver = $state(false)
+  const photosBusy = $derived(photos.some((p) => p.status === 'uploading'))
+  const photosReady = $derived(photos.filter((p) => p.status === 'done' && p.uploadId))
+
+  function settlePhoto(item: PendingPhoto) {
+    if (!item.inFlight) return
+    item.inFlight = false
+    uploading.end()
+  }
+
+  function addPhotos(files: FileList | File[]) {
+    error = ''
+    for (const file of Array.from(files)) {
+      if (!file.type.startsWith('image/') && !file.type.startsWith('video/')) {
+        error = `${file.name || 'that file'} is not a photo or a video — attach other files as a link`
+        continue
+      }
+      if (photos.length >= MAX_PHOTOS) {
+        error = `a message holds at most ${MAX_PHOTOS} photos`
+        break
+      }
+      // Pushed, then read back: $state proxies what it holds, and the callbacks below must
+      // write through the proxy for progress to show.
+      photos.push({ key: photoKey++, name: file.name || 'pasted image', total: file.size, sent: 0, uploadId: null, status: 'uploading', inFlight: true })
+      const item = photos[photos.length - 1]
+      uploading.start()
+      const handle = new tus.Upload(file, {
+        endpoint: '/files',
+        chunkSize: 16 * 1024 * 1024,
+        retryDelays: [0, 1000, 3000, 5000, 10000],
+        storeFingerprintForResuming: false,
+        metadata: {
+          filename: file.name || 'pasted-image.png',
+          filetype: file.type,
+          lastModified: String(file.lastModified),
+        },
+        onUploadUrlAvailable: () => {
+          item.uploadId = handle.url?.split('/').pop() ?? null
+        },
+        onProgress: (sent, total) => {
+          item.sent = sent
+          item.total = total
+        },
+        onSuccess: () => {
+          item.uploadId = handle.url?.split('/').pop() ?? null
+          item.status = 'done'
+          settlePhoto(item)
+        },
+        onError: (err) => {
+          item.status = 'error'
+          item.error = err.message
+          // Over the storage limit: the server's own sentence says how much is in use.
+          const response = (err as tus.DetailedError).originalResponse
+          if (response?.getStatus() === 413) {
+            try {
+              item.error = JSON.parse(response.getBody()).error ?? item.error
+            } catch {
+              item.error = 'not enough space left under your storage limit'
+            }
+          }
+          settlePhoto(item)
+        },
+      })
+      item.handle = handle
+      handle.start()
+    }
+  }
+
+  async function dropPhoto(item: PendingPhoto) {
+    item.handle?.abort()
+    settlePhoto(item)
+    if (item.uploadId) {
+      try {
+        await api.del(`/files/${item.uploadId}`)
+      } catch {
+        // Already gone; nothing to reclaim.
+      }
+    }
+    photos = photos.filter((p) => p !== item)
+  }
+
+  function onPaste(event: ClipboardEvent) {
+    const files = Array.from(event.clipboardData?.files ?? []).filter((f) => f.type.startsWith('image/'))
+    if (!files.length) return
+    event.preventDefault()
+    addPhotos(files)
+  }
+
+  // The viewer for photos posted in chat: the link's files, opened at the one clicked.
+  let viewer = $state<{ token: string; files: ShareFile[] } | null>(null)
+  let viewerIndex = $state(0)
+
+  async function openPhotos(card: ShareCardData, photoId: number) {
+    if (!card.token) return
+    try {
+      const detail = await api.get<ShareDetail>(`/api/shares/${card.token}`)
+      const files = detail.files.filter((f) => f.preview)
+      viewerIndex = Math.max(0, files.findIndex((f) => f.id === photoId))
+      viewer = { token: card.token, files }
+    } catch (e) {
+      error = e instanceof ApiError ? e.message : 'could not open the photos'
+    }
+  }
+
   // ---- replies, reactions, pins, seen by ----------------------------------------
   let replyingTo = $state<ChatMessage | null>(null)
   let reactingId = $state<number | null>(null)
@@ -275,7 +412,7 @@
   async function send(event: SubmitEvent) {
     event.preventDefault()
     const body = draft.trim()
-    if ((!body && attachments.length === 0) || sending) return
+    if ((!body && attachments.length === 0 && photosReady.length === 0) || sending || photosBusy) return
     error = ''
     sending = true
     try {
@@ -283,9 +420,11 @@
         body,
         shares: attachments.map((a) => a.token),
         reply_to: replyingTo?.id ?? null,
+        ...(photosReady.length ? { photos: photosReady.map((p) => p.uploadId) } : {}),
       })
       draft = ''
       attachments = []
+      photos = []
       replyingTo = null
       mentionQuery = null
       pinned = true
@@ -392,7 +531,29 @@
 
 <!-- Fixed height on phones, where the page scrolls; from md, the window's height less the
      header above it, so the conversation uses the screen rather than a box within it. -->
-<div class="flex h-[34rem] flex-col rounded-xl border border-ink-800 md:h-[calc(100dvh-15rem)] md:min-h-[28rem]">
+<!-- svelte-ignore a11y_no_static_element_interactions — a drop target for photos;
+     the photo button does the same from the keyboard. -->
+<div
+  class="flex h-[34rem] flex-col rounded-xl border md:h-[calc(100dvh-15rem)] md:min-h-[28rem] {dragOver
+    ? 'border-accent'
+    : 'border-ink-800'}"
+  ondragover={(e) => {
+    if (e.dataTransfer?.types.includes('Files')) {
+      e.preventDefault()
+      dragOver = true
+    }
+  }}
+  ondragleave={(e) => {
+    if (e.currentTarget === e.target) dragOver = false
+  }}
+  ondrop={(e) => {
+    dragOver = false
+    if (e.dataTransfer?.files.length) {
+      e.preventDefault()
+      addPhotos(e.dataTransfer.files)
+    }
+  }}
+>
   <header class="relative flex items-center justify-between gap-3 border-b border-ink-800 px-4 py-2.5">
     <div class="min-w-0">
       <h2 class="truncate text-sm text-ink-100">{room.name}</h2>
@@ -673,7 +834,11 @@
           {#if message.shares?.length}
             <div class="mt-1.5 flex flex-col gap-1.5">
               {#each message.shares as card, c (c)}
-                <ShareCard {card} />
+                {#if card.inline}
+                  <PhotoGrid {card} onOpen={(id) => openPhotos(card, id)} />
+                {:else}
+                  <ShareCard {card} />
+                {/if}
               {/each}
             </div>
           {/if}
@@ -727,6 +892,21 @@
       </span>
       <button type="button" aria-label="Cancel reply" onclick={() => (replyingTo = null)} class="shrink-0 px-1 text-ink-500 hover:text-ink-100">×</button>
     </div>
+  {/if}
+  {#if photos.length}
+    <ul class="mb-2 flex flex-wrap gap-1.5" aria-label="Photos to send">
+      {#each photos as photo (photo.key)}
+        <li class="flex max-w-56 items-center gap-1.5 rounded-lg border py-1 pl-2.5 pr-1.5 text-xs {photo.status === 'error'
+          ? 'border-red-900 text-red-300'
+          : 'border-ink-700 bg-ink-900 text-ink-300'}" title={photo.error ?? photo.name}>
+          <span class="truncate">{photo.status === 'error' ? photo.error : photo.name}</span>
+          {#if photo.status === 'uploading'}
+            <span class="tnum shrink-0 text-ink-500">{Math.floor((photo.sent / Math.max(1, photo.total)) * 100)}%</span>
+          {/if}
+          <button type="button" aria-label="Remove {photo.name}" onclick={() => dropPhoto(photo)} class="px-1 text-ink-500 hover:text-ink-100">×</button>
+        </li>
+      {/each}
+    </ul>
   {/if}
   {#if attachments.length}
     <ul class="mb-2 flex flex-wrap gap-1.5">
@@ -791,6 +971,31 @@
     </div>
     <button
       type="button"
+      onclick={() => photoInput?.click()}
+      title="Add photos"
+      aria-label="Add photos"
+      class="shrink-0 rounded-lg border border-ink-700 px-2.5 py-2 text-ink-300 transition hover:border-ink-500"
+    >
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true" class="block">
+        <rect x="1.8" y="3" width="12.4" height="10" rx="1.6" />
+        <circle cx="5.6" cy="6.6" r="1.2" />
+        <path d="M2.4 12l3.6-3.4 2.6 2.4 2.2-2 2.8 2.8" stroke-linejoin="round" />
+      </svg>
+    </button>
+    <input
+      bind:this={photoInput}
+      type="file"
+      accept="image/*,video/*"
+      multiple
+      class="hidden"
+      onchange={(e) => {
+        const input = e.currentTarget as HTMLInputElement
+        if (input.files) addPhotos(input.files)
+        input.value = ''
+      }}
+    />
+    <button
+      type="button"
       onclick={() => (picking = true)}
       title="Attach your links"
       aria-label="Attach your links"
@@ -802,6 +1007,7 @@
       onkeydown={onKeydown}
       oninput={syncMentionQuery}
       onclick={syncMentionQuery}
+      onpaste={onPaste}
       onblur={() => (mentionQuery = null)}
       rows="1"
       maxlength="4000"
@@ -809,7 +1015,7 @@
       class="max-h-32 min-h-[2.25rem] flex-1 resize-none rounded-lg border border-ink-700 bg-ink-900 px-3 py-2 text-sm outline-none focus:border-accent"
     ></textarea>
     <button
-      disabled={sending || (!draft.trim() && attachments.length === 0)}
+      disabled={sending || photosBusy || (!draft.trim() && attachments.length === 0 && photosReady.length === 0)}
       class="shrink-0 rounded-lg bg-accent px-3 py-2 text-xs font-medium text-ink-950 transition hover:bg-accent-dim disabled:opacity-40"
     >Send</button>
   </form>
@@ -856,4 +1062,16 @@
 
 {#if showSettings}
   <RoomSettings {room} onClose={() => (showSettings = false)} />
+{/if}
+
+{#if viewer}
+  {@const token = viewer.token}
+  <Lightbox
+    files={viewer.files}
+    bind:index={viewerIndex}
+    thumbUrl={(id, size) => `/d/${token}/${id}/thumb${size === 'sm' ? '?s=sm' : ''}`}
+    inlineUrl={(id) => `/d/${token}/${id}/inline`}
+    downloadUrl={(id) => `/d/${token}/${id}`}
+    onClose={() => (viewer = null)}
+  />
 {/if}

@@ -180,8 +180,9 @@
           </li>
           <li>
             <strong>Chat:</strong> every member can see the names of all rooms; what is said in a
-            room only its members can see. They also see your reactions, what you pinned, and how
-            far you have read there — "seen by" under the latest message.
+            room only its members can see, including photos posted into it. They also see your
+            reactions, what you pinned, and how far you have read there — "seen by" under the
+            latest message.
           </li>
           <li>
             <strong>Administrators</strong> can see the list of accounts and every link and file,
@@ -205,7 +206,9 @@
             whichever comes first. A link can be set to last at most {days(r.link_max_days)} at a
             time; its creator can change that while it still works, and each change counts from
             that moment. Privileged members and administrators can also make a link that does
-            not expire, whose files stay until the link is removed. They are then deleted
+            not expire, whose files stay until the link is removed. Photos posted straight into a
+            chat room are kept as long as the message showing them: removing the message, or
+            deleting the room, deletes them. They are then deleted
             within {minutes(r.sweep_minutes)}, unless the same file is still in another link that
             has not expired. Previews go with their file, and the record of who downloaded a link
             goes with the link. Anything uploaded but never made into a link is deleted within

@@ -569,6 +569,44 @@ std::int64_t attachUploads(Database& db, std::int64_t shareId, std::int64_t user
 
 }  // namespace
 
+std::pair<std::int64_t, std::string> createChatPhotoShare(Database& db, std::int64_t userId,
+                                                          const std::string& title,
+                                                          const Json::Value& uploads) {
+    if (!uploads.isArray() || uploads.empty()) {
+        throw HttpError{400, "photos must be a list of upload ids"};
+    }
+    if (uploads.size() > kMaxChatPhotos) {
+        throw HttpError{400, "a message holds at most " + std::to_string(kMaxChatPhotos) + " photos"};
+    }
+    for (const auto& entry : uploads) {
+        if (!entry.isString()) {
+            throw HttpError{400, "upload ids must be strings"};
+        }
+        // By what the server found in the file, not what the browser said it was.
+        auto kind = db.prepare(
+            "SELECT COALESCE(b.content_type, '') FROM uploads u "
+            "JOIN blobs b ON b.sha256 = u.blob_sha256 "
+            "WHERE u.id = ? AND u.owner_id = ? AND u.completed_at IS NOT NULL");
+        kind.bind(1, entry.asString()).bind(2, userId);
+        if (!kind.step()) {
+            throw HttpError{400, "upload '" + entry.asString() + "' is unknown, unfinished, or not yours"};
+        }
+        const std::string type = kind.columnText(0);
+        if (type.rfind("image/", 0) != 0 && type.rfind("video/", 0) != 0) {
+            throw HttpError{400, "only photos and videos can be posted into chat — attach other files as a link"};
+        }
+    }
+    const std::int64_t now = nowSeconds();
+    const std::string token = crypto::randomToken(16);
+    auto insert = db.prepare(
+        "INSERT INTO shares (token, owner_id, title, created_at, expires_at, visibility) "
+        "VALUES (?, ?, ?, ?, ?, 'private')");
+    insert.bind(1, token).bind(2, userId).bind(3, title).bind(4, now).bind(5, kNeverExpires).run();
+    const std::int64_t shareId = db.lastInsertId();
+    attachUploads(db, shareId, userId, uploads, now);
+    return {shareId, token};
+}
+
 void registerShareRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
     auto& app = drogon::app();
 

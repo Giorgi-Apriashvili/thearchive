@@ -254,6 +254,11 @@ export interface ShareCard {
   visibility?: 'private' | 'public'
   /** Thumbnail URLs; always empty for a password-protected link. */
   previews?: string[]
+  /** Photos posted straight into chat: shown as the photos, not as a link card. */
+  inline?: boolean
+  /** Every photo of an inline card, while its link works. `thumb` only where a preview
+   *  exists — a video without one shows as a play tile. */
+  photos?: { id: number; kind: 'image' | 'video'; thumb?: string }[]
 }
 
 /** A link a member sent you. */

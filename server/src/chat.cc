@@ -531,7 +531,14 @@ void registerChatRoutes(Database& db, Auth& auth) {
 
                 if (req->method() == drogon::Delete) {
                     // Messages, memberships, mentions and attachments cascade. The links
-                    // that were attached are untouched: they belong to their owners.
+                    // that were attached are untouched: they belong to their owners — except
+                    // photos posted into the room, whose links existed only for it.
+                    auto photos = db.prepare(
+                        "UPDATE shares SET deleted_at = ? WHERE deleted_at IS NULL AND id IN "
+                        "(SELECT ms.share_id FROM message_shares ms "
+                        " JOIN messages m ON m.id = ms.message_id "
+                        " WHERE m.room_id = ? AND ms.inline = 1)");
+                    photos.bind(1, nowSeconds()).bind(2, roomId).run();
                     auto del = db.prepare("DELETE FROM rooms WHERE id = ?");
                     del.bind(1, roomId).run();
                     activity::record(req, user, "chat.room_deleted", "“" + was + "”");
@@ -653,8 +660,12 @@ void registerChatRoutes(Database& db, Auth& auth) {
                             attached.emplace_back(shareId, title.columnText(0));
                         }
                     }
-                    if (body.empty() && attached.empty()) {
-                        throw HttpError{400, "a message needs some text or a link"};
+                    // Photos to post inline: the poster's own finished uploads, made into a
+                    // link inside the same transaction as the message below.
+                    const bool hasPhotos = json.isMember("photos") && json["photos"].isArray() &&
+                                           !json["photos"].empty();
+                    if (body.empty() && attached.empty() && !hasPhotos) {
+                        throw HttpError{400, "a message needs some text, a link or a photo"};
                     }
 
                     // A reply answers a message in this room that is still there.
@@ -689,6 +700,19 @@ void registerChatRoutes(Database& db, Auth& auth) {
                     recordMentions(db, messageId, roomId, body);
 
                     int position = 0;
+                    if (hasPhotos) {
+                        auto named = db.prepare("SELECT name FROM rooms WHERE id = ?");
+                        named.bind(1, roomId);
+                        named.step();
+                        const std::string title = "Photos in “" + named.columnText(0) + "”";
+                        const auto [photoShare, photoToken] =
+                            createChatPhotoShare(db, user.id, title, json["photos"]);
+                        auto link = db.prepare(
+                            "INSERT INTO message_shares (message_id, position, share_id, title, inline) "
+                            "VALUES (?, ?, ?, ?, 1)");
+                        link.bind(1, messageId).bind(2, std::int64_t{position++})
+                            .bind(3, photoShare).bind(4, title).run();
+                    }
                     for (const auto& [shareId, title] : attached) {
                         auto link = db.prepare(
                             "INSERT INTO message_shares (message_id, position, share_id, title) "
@@ -845,7 +869,7 @@ void registerChatRoutes(Database& db, Auth& auth) {
                     // link still works belongs to the link, not to the moment it was posted.
                     if (!positions.empty()) {
                         auto links = db.prepare(
-                            "SELECT ms.message_id, ms.share_id, ms.title "
+                            "SELECT ms.message_id, ms.share_id, ms.title, ms.inline "
                             "FROM message_shares ms JOIN messages m ON m.id = ms.message_id "
                             "WHERE m.room_id = ? AND ms.message_id BETWEEN ? AND ? "
                             "ORDER BY ms.message_id, ms.position");
@@ -865,6 +889,34 @@ void registerChatRoutes(Database& db, Auth& auth) {
                             }
                             if (card["state"].asString() == "gone") {
                                 card["title"] = links.columnText(2);
+                            }
+                            // Photos posted inline: every photo, not the card's four previews,
+                            // for a grid in the message and the viewer behind it.
+                            if (links.columnInt(3) != 0) {
+                                card["inline"] = true;
+                                if (card.isMember("token") && !links.columnIsNull(1)) {
+                                    const std::string token = card["token"].asString();
+                                    auto photos = db.prepare(
+                                        "SELECT sf.id, b.thumb = 1, "
+                                        "       COALESCE(b.content_type, '') LIKE 'video/%' "
+                                        "FROM share_files sf "
+                                        "JOIN blobs b ON b.sha256 = sf.blob_sha256 "
+                                        "WHERE sf.share_id = ? ORDER BY sf.id");
+                                    photos.bind(1, links.columnInt(1));
+                                    while (photos.step()) {
+                                        const std::string base =
+                                            "/d/" + token + "/" + std::to_string(photos.columnInt(0));
+                                        Json::Value photo;
+                                        photo["id"] = static_cast<Json::Int64>(photos.columnInt(0));
+                                        photo["kind"] = photos.columnInt(2) != 0 ? "video" : "image";
+                                        // Only where a preview exists; a video without one is
+                                        // shown as a play tile rather than a broken image.
+                                        if (photos.columnInt(1) != 0) {
+                                            photo["thumb"] = base + "/thumb";
+                                        }
+                                        card["photos"].append(photo);
+                                    }
+                                }
                             }
                             messages[found->second]["shares"].append(card);
                         }
@@ -1099,6 +1151,12 @@ void registerChatRoutes(Database& db, Auth& auth) {
                 }
                 auto mentions = db.prepare("DELETE FROM message_mentions WHERE message_id = ?");
                 mentions.bind(1, messageId).run();
+                // Photos posted with it were made for it, so their link is revoked — the
+                // sweep then frees the space. Other links it carried belong to their owners.
+                auto photos = db.prepare(
+                    "UPDATE shares SET deleted_at = ? WHERE deleted_at IS NULL AND id IN "
+                    "(SELECT share_id FROM message_shares WHERE message_id = ? AND inline = 1)");
+                photos.bind(1, now).bind(2, messageId).run();
                 // Links it carried are part of what was said, so they go too; and what
                 // people made of it — reactions, a pin — has nothing left to be about.
                 auto links = db.prepare("DELETE FROM message_shares WHERE message_id = ?");

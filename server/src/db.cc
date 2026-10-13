@@ -414,7 +414,14 @@ CREATE TABLE message_reactions (
 );
 )SQL";
 
-constexpr std::array<Migration, 20> kMigrations{{
+// Photos posted straight into chat: an attachment flagged inline is shown as the photos
+// themselves rather than as a link card. The link behind it is the poster's own, made for
+// the message, and goes when the message does.
+constexpr const char* kSchemaV21 = R"SQL(
+ALTER TABLE message_shares ADD COLUMN inline INTEGER NOT NULL DEFAULT 0;
+)SQL";
+
+constexpr std::array<Migration, 21> kMigrations{{
     {1, kSchemaV1},
     {2, kSchemaV2},
     {3, kSchemaV3},
@@ -435,6 +442,7 @@ constexpr std::array<Migration, 20> kMigrations{{
     {18, kSchemaV18},
     {19, kSchemaV19},
     {20, kSchemaV20},
+    {21, kSchemaV21},
 }};
 
 }  // namespace

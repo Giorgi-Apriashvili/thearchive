@@ -943,6 +943,31 @@ showing them to the room is new, and the privacy notice says so.
 On a touch screen there is no hover, so a tap on a message shows its actions; hidden ones
 take no taps at all, since an invisible Remove under a thumb would be found by accident.
 
+### Photos straight into chat
+
+Photos are picked, pasted or dropped into the composer and upload at once over the usual
+tus path — progress, storage limits and the leave-site guard as on the Uploads page — so
+sending only waits for what is still going. `POST …/messages {photos: [upload ids]}`
+makes them, inside the message's own transaction, into a members-only link of the
+sender's (`createChatPhotoShare`), attached with `message_shares.inline` so it is shown
+as the photos rather than as a card: one large, or a grid of up to nine with "+N", opening
+the same Lightbox as the download page. Each upload must be an image or a video by the
+server's own sniffing, at most 20 per message.
+
+Such a link never expires — a deliberate exception to "never" being for privileged
+members, scoped to photos a conversation shows: they last as long as the message.
+Removing the message, or deleting the room, revokes the link, and the sweep frees the
+space; the poster can also remove it from "Your links", where it appears as
+"Photos in “room”", and the message then says the photos were removed.
+
+**A bug this turned up.** `blobs.first_uploader` and `share_files.uploaded_by` reference
+users with no ON DELETE, so deleting anyone whose file was still stored failed outright;
+and a deleted account's links cascaded away without decrementing any refcount, so even
+had it succeeded, its files would have stayed on disk for good — contrary to the notice.
+Account deletion now releases the account's links as the sweep releases an expired one,
+and clears the two attribution columns, in one transaction. No account with files of its
+own had been deleted in production, so nothing was stranded.
+
 ### Notifications
 
 Pop-ups while the site is open, for an unread mention, an unseen send of links, or an

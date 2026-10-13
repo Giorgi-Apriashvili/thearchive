@@ -34,6 +34,16 @@ Json::Value shareCard(Database& db, std::int64_t shareId);
 // expired, been revoked or used up. Only your own working links can be sent anywhere.
 std::int64_t requireOwnLiveShare(Database& db, const std::string& token, std::int64_t userId);
 
+// Photos posted in chat: a members-only link of the poster's finished uploads, titled
+// `title`, that never expires — it lasts as long as the message showing it, which is what
+// removes it (see chat.cc). Each upload must be the poster's, finished, and an image or a
+// video by the server's own sniffing. Runs no transaction of its own: the caller's makes
+// the message and its photos one thing. Returns the share's id and token.
+std::pair<std::int64_t, std::string> createChatPhotoShare(Database& db, std::int64_t userId,
+                                                          const std::string& title,
+                                                          const Json::Value& uploads);
+inline constexpr Json::ArrayIndex kMaxChatPhotos = 20;
+
 // Base URL used to build shareable links, e.g. https://archive.example.com.
 // From ARCHIVE_PUBLIC_URL; the server cannot infer it reliably from behind a proxy.
 std::string publicBaseUrl();
