@@ -160,6 +160,77 @@
 
   let showEmoji = $state(false)
 
+  // ---- replies, reactions, pins, seen by ----------------------------------------
+  let replyingTo = $state<ChatMessage | null>(null)
+  let reactingId = $state<number | null>(null)
+  let reactingMore = $state(false)
+  let showPins = $state(false)
+  let flashId = $state<number | null>(null)
+  // On a touch screen there is no hover: tapping a message shows its actions instead.
+  let actionsFor = $state<number | null>(null)
+
+  function onMessageTap(event: MouseEvent, id: number) {
+    if ((event.target as HTMLElement).closest('a, button, textarea, input')) return
+    actionsFor = actionsFor === id ? null : id
+  }
+  const quickReactions = ['👍', '❤️', '😂', '😮', '😢', '🎉']
+
+  function startReply(message: ChatMessage) {
+    replyingTo = message
+    composer?.focus()
+  }
+
+  async function react(message: ChatMessage, emoji: string) {
+    reactingId = null
+    reactingMore = false
+    const mine = message.reactions?.some((r) => r.emoji === emoji && r.mine) ?? false
+    try {
+      await api.post(`/api/chat/messages/${message.id}/reactions`, { emoji, on: !mine })
+      await chat.reload()
+    } catch (e) {
+      error = e instanceof ApiError ? e.message : 'could not react'
+    }
+  }
+
+  async function togglePin(message: ChatMessage) {
+    try {
+      await api.post(`/api/chat/messages/${message.id}/pin`, { pinned: !message.pinned })
+      await Promise.all([chat.reload(), chat.loadPins()])
+    } catch (e) {
+      error = e instanceof ApiError ? e.message : 'could not change the pin'
+    }
+  }
+
+  /** Brings a message into view — loading older history until it is there — and marks
+   *  it briefly, so a reply's quote or a pin leads somewhere visible. */
+  async function jumpTo(id: number) {
+    showPins = false
+    for (let page = 0; page < 30 && !chat.messages.some((m) => m.id === id) && chat.hasOlder; page++) {
+      await chat.loadOlder()
+    }
+    await tick()
+    const target = document.getElementById(`message-${id}`)
+    if (!target) {
+      error = 'that message is no longer in this room'
+      return
+    }
+    target.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    flashId = id
+    setTimeout(() => (flashId = null), 1600)
+  }
+
+  const nameOf = (person: { username: string; display_name?: string }) =>
+    person.display_name || person.username
+
+  // Who has read up to the latest message — not me, and not whoever wrote it.
+  const seenBy = $derived.by(() => {
+    const last = chat.messages[chat.messages.length - 1]
+    if (!last || !chat.members) return []
+    return chat.members.members.filter(
+      (m) => m.username !== me.username && m.username !== last.author && (m.read_up_to ?? 0) >= last.id,
+    )
+  })
+
   // Into the draft at the caret, keeping the composer focused for whatever comes next.
   function insertEmoji(emoji: string) {
     const field = composer
@@ -211,9 +282,11 @@
       await api.post(`/api/chat/rooms/${room.id}/messages`, {
         body,
         shares: attachments.map((a) => a.token),
+        reply_to: replyingTo?.id ?? null,
       })
       draft = ''
       attachments = []
+      replyingTo = null
       mentionQuery = null
       pinned = true
       await chat.refresh()
@@ -246,6 +319,11 @@
         mentionQuery = null
         return
       }
+    }
+    if (event.key === 'Escape' && replyingTo) {
+      event.preventDefault()
+      replyingTo = null
+      return
     }
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault()
@@ -334,6 +412,27 @@
       <Members members={chat.members} roomName={room.name} onClose={() => (showMembers = false)} />
     {/if}
     <div class="relative flex shrink-0 items-center gap-3">
+      {#if chat.pins.length}
+        <button
+          class="text-xs text-ink-500 hover:text-ink-300"
+          aria-expanded={showPins}
+          onclick={() => (showPins = !showPins)}
+        >Pinned ({chat.pins.length})</button>
+        {#if showPins}
+          <button class="fixed inset-0 z-30 cursor-default" tabindex="-1" aria-label="Close pins" onclick={() => (showPins = false)}></button>
+          <div class="absolute right-0 top-full z-40 mt-1 max-h-80 w-80 overflow-y-auto rounded-xl border border-ink-700 bg-ink-900 p-2 shadow-xl">
+            {#each chat.pins as pin (pin.id)}
+              <button class="block w-full rounded-lg px-2 py-1.5 text-left hover:bg-ink-800" onclick={() => jumpTo(pin.id)}>
+                <span class="block text-[11px] text-ink-500">
+                  {pin.author_display_name || pin.author} · {chatTime(pin.created_at)}
+                </span>
+                <span class="mt-0.5 block truncate text-xs text-ink-100">{pin.excerpt || 'a link'}</span>
+                <span class="block text-[10px] text-ink-700">pinned by {pin.pinned_by}</span>
+              </button>
+            {/each}
+          </div>
+        {/if}
+      {/if}
       {#if canInvite}
         <button
           class="text-xs text-ink-500 hover:text-ink-300"
@@ -439,7 +538,18 @@
           <span class="h-px flex-1 bg-accent/40"></span>
         </div>
       {/if}
-      <div class="group relative flex gap-2.5 {continued ? 'mt-0.5' : newDay || firstUnread ? '' : 'mt-3'}">
+      <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions
+           — the tap only reveals the actions for touch screens; with a keyboard they are
+           reached by Tab, and focus shows them. -->
+      <div
+        id="message-{message.id}"
+        onclick={(e) => onMessageTap(e, message.id)}
+        class="group relative flex gap-2.5 rounded-lg transition-colors duration-700 {continued
+          ? 'mt-0.5'
+          : newDay || firstUnread
+            ? ''
+            : 'mt-3'} {flashId === message.id ? 'bg-accent/10' : ''}"
+      >
         {#if continued}
           <span class="tnum w-7 shrink-0 pt-1 text-right text-[9px] text-ink-700 opacity-0 group-hover:opacity-100">
             {clockTime(message.created_at)}
@@ -470,15 +580,51 @@
           </p>
         {/if}
         {#if !message.deleted && editingId !== message.id}
-          <!-- Shown on hover where there is hover; always on touch screens, which have none. -->
-          <span class="absolute right-0 top-0 flex gap-2 rounded bg-ink-950/80 px-1 opacity-0 transition group-hover:opacity-100 [@media(hover:none)]:opacity-100">
+          <!-- On hover where there is hover, on tap where there is not, and on keyboard focus. -->
+          <!-- Hidden actions take no taps: an invisible Remove under someone's thumb would be
+               found by accident. -->
+          <span class="pointer-events-none absolute right-0 top-0 z-10 flex gap-2 rounded bg-ink-950/80 px-1 opacity-0 transition focus-within:pointer-events-auto focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100 {reactingId ===
+            message.id || actionsFor === message.id
+            ? 'pointer-events-auto opacity-100'
+            : ''}">
+            <button class="text-[10px] text-ink-500 hover:text-ink-300" onclick={() => (reactingId = reactingId === message.id ? null : message.id)}>React</button>
+            <button class="text-[10px] text-ink-500 hover:text-ink-300" onclick={() => startReply(message)}>Reply</button>
+            <button class="text-[10px] text-ink-500 hover:text-ink-300" onclick={() => togglePin(message)}>{message.pinned ? 'Unpin' : 'Pin'}</button>
             {#if message.author === me.username && !message.author_departed}
               <button class="text-[10px] text-ink-500 hover:text-ink-300" onclick={() => startEdit(message)}>Edit</button>
             {/if}
             {#if message.author === me.username || me.role === 'admin'}
               <button class="text-[10px] text-ink-500 hover:text-red-400" onclick={() => (removing = message)}>Remove</button>
             {/if}
+            {#if reactingId === message.id}
+              <button class="fixed inset-0 z-30 cursor-default" tabindex="-1" aria-label="Close reactions" onclick={() => { reactingId = null; reactingMore = false }}></button>
+              <span class="absolute right-0 top-full z-40 mt-1 flex items-center gap-0.5 rounded-full border border-ink-700 bg-ink-900 px-1.5 py-1 shadow-xl">
+                {#each quickReactions as emoji (emoji)}
+                  <button class="rounded-full px-1 text-base leading-none transition hover:bg-ink-800" aria-label="React {emoji}" onclick={() => react(message, emoji)}>{emoji}</button>
+                {/each}
+                <button class="rounded-full px-1.5 text-xs text-ink-500 hover:bg-ink-800 hover:text-ink-300" aria-label="More reactions" onclick={() => (reactingMore = !reactingMore)}>⋯</button>
+                {#if reactingMore}
+                  <EmojiPicker placement="below" onPick={(emoji) => react(message, emoji)} onClose={() => (reactingMore = false)} />
+                {/if}
+              </span>
+            {/if}
           </span>
+        {/if}
+        {#if message.pinned && !message.deleted}
+          <p class="text-[10px] text-accent/80">Pinned by {message.pinned.by}</p>
+        {/if}
+        {#if message.reply_to && !message.deleted}
+          <button
+            class="mt-0.5 block max-w-[70ch] truncate border-l-2 border-ink-700 pl-2 text-left text-xs text-ink-500 transition hover:border-accent hover:text-ink-300"
+            onclick={() => jumpTo(message.reply_to!.id)}
+          >
+            {#if message.reply_to.deleted}
+              <span class="italic">Replying to a removed message</span>
+            {:else}
+              <span class="text-ink-300">{message.reply_to.author_display_name || message.reply_to.author}</span>
+              {message.reply_to.excerpt || (message.reply_to.has_links ? 'a link' : '')}
+            {/if}
+          </button>
         {/if}
         {#if message.deleted}
           <!-- A tombstone, not a gap: quietly reflowing a conversation around what was
@@ -531,10 +677,28 @@
               {/each}
             </div>
           {/if}
+          {#if message.reactions?.length}
+            <div class="mt-1.5 flex flex-wrap gap-1">
+              {#each message.reactions as reaction (reaction.emoji)}
+                <button
+                  onclick={() => react(message, reaction.emoji)}
+                  title={reaction.names.join(', ')}
+                  class="tnum flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs transition {reaction.mine
+                    ? 'border-accent/60 bg-accent/10 text-accent'
+                    : 'border-ink-700 text-ink-300 hover:border-ink-500'}"
+                ><span class="text-sm leading-none">{reaction.emoji}</span>{reaction.count}</button>
+              {/each}
+            </div>
+          {/if}
         {/if}
         </div>
       </div>
     {/each}
+    {#if seenBy.length}
+      <p class="mt-1 text-right text-[10px] text-ink-700" title="Read up to the latest message">
+        Seen by {seenBy.map(nameOf).join(', ')}
+      </p>
+    {/if}
   </div>
   {#if !pinned && chat.messages.length}
     <!-- Scrolled back: a way down again, saying whether anything arrived meanwhile. -->
@@ -555,6 +719,15 @@
   {/if}
 
   <div class="border-t border-ink-800 px-4 py-3">
+  {#if replyingTo}
+    <div class="mb-2 flex items-center justify-between gap-3 rounded-lg border-l-2 border-accent bg-ink-900 py-1.5 pl-3 pr-2 text-xs">
+      <span class="min-w-0 truncate text-ink-500">
+        Replying to <span class="text-ink-300">{replyingTo.author_display_name || replyingTo.author}</span>
+        {#if replyingTo.body}· {replyingTo.body.replace(/\s+/g, ' ').slice(0, 100)}{/if}
+      </span>
+      <button type="button" aria-label="Cancel reply" onclick={() => (replyingTo = null)} class="shrink-0 px-1 text-ink-500 hover:text-ink-100">×</button>
+    </div>
+  {/if}
   {#if attachments.length}
     <ul class="mb-2 flex flex-wrap gap-1.5">
       {#each attachments as link (link.token)}

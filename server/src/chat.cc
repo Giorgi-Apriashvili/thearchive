@@ -20,6 +20,10 @@ constexpr std::size_t kMaxBodyChars = 4000;
 // A page of history when scrolling back, and the most edits and removals one poll returns.
 constexpr std::int64_t kOlderPage = 100;
 constexpr std::size_t kMaxTopicChars = 200;
+// How much of a message a reply quotes, a pin list shows, and limits on reacting.
+constexpr std::size_t kQuoteChars = 120;
+constexpr int kMaxReactionsPerPerson = 8;
+constexpr int kMaxPinsPerRoom = 50;
 constexpr std::int64_t kMaxChangedPerFetch = 200;
 constexpr std::size_t kMaxNameChars = 60;
 constexpr int kMaxMessagesPerFetch = 200;
@@ -31,6 +35,53 @@ std::int64_t parseId(const std::string& raw, const char* what) {
     } catch (const std::exception&) {
         throw HttpError{404, std::string{"no such "} + what};
     }
+}
+
+// The first `limit` characters (not bytes) of a message, on one line.
+std::string excerpt(const std::string& body, std::size_t limit) {
+    std::string out;
+    std::size_t chars = 0;
+    for (const char ch : body) {
+        const bool lead = (static_cast<unsigned char>(ch) & 0xC0) != 0x80;
+        if (lead && chars == limit) {
+            return out + "…";
+        }
+        if (lead) {
+            ++chars;
+        }
+        out += (ch == '\n' || ch == '\r') ? ' ' : ch;
+    }
+    return out;
+}
+
+// A reaction is an emoji, not a word: at most 32 bytes, with no ASCII at all — no
+// letters, digits, spaces or punctuation — and none of the invisible characters that
+// reorder text (U+200E/F, U+202A-E, U+2066-9). That leaves emoji with their joiners and
+// variation selectors, and keeps a reaction chip from carrying a message of its own.
+bool isReaction(const std::string& emoji) {
+    if (emoji.empty() || emoji.size() > 32) {
+        return false;
+    }
+    for (std::size_t i = 0; i < emoji.size();) {
+        const auto c = static_cast<unsigned char>(emoji[i]);
+        if (c < 0x80) {
+            return false;
+        }
+        const std::size_t length = c >= 0xF0 ? 4 : c >= 0xE0 ? 3 : c >= 0xC0 ? 2 : 1;
+        if (length == 1 || i + length > emoji.size()) {
+            return false;
+        }
+        std::uint32_t point = c & (0xFF >> (length + 1));
+        for (std::size_t k = 1; k < length; ++k) {
+            point = (point << 6) | (static_cast<unsigned char>(emoji[i + k]) & 0x3F);
+        }
+        if (point == 0x200E || point == 0x200F || (point >= 0x202A && point <= 0x202E) ||
+            (point >= 0x2066 && point <= 0x2069)) {
+            return false;
+        }
+        i += length;
+    }
+    return true;
 }
 
 std::string trimmed(const std::string& raw) {
@@ -267,7 +318,7 @@ void registerChatRoutes(Database& db, Auth& auth) {
                 auto stmt = db.prepare(
                     "SELECT u.username, m.state, m.responded_at, m.invited_at, "
                     "       r.created_by = u.id, u.role, COALESCE(u.display_name, ''), "
-                    "       COALESCE(u.avatar, ''), u.id "
+                    "       COALESCE(u.avatar, ''), u.id, m.last_read_id "
                     "FROM room_members m JOIN users u ON u.id = m.user_id "
                     "JOIN rooms r ON r.id = m.room_id "
                     "WHERE m.room_id = ? AND m.state IN ('member', 'invited') "
@@ -286,6 +337,11 @@ void registerChatRoutes(Database& db, Auth& auth) {
                     }
                     if (const std::string pic = stmt.columnText(7); !pic.empty()) {
                         row["avatar"] = avatarUrl(stmt.columnInt(8), pic);
+                    }
+                    // How far each member has read, for "seen by" under the latest message.
+                    // Shown to the room's members only — the same people who can read it.
+                    if (isMember) {
+                        row["read_up_to"] = static_cast<Json::Int64>(stmt.columnInt(9));
                     }
                     (isMember ? members : invited).append(row);
                 }
@@ -601,12 +657,30 @@ void registerChatRoutes(Database& db, Auth& auth) {
                         throw HttpError{400, "a message needs some text or a link"};
                     }
 
+                    // A reply answers a message in this room that is still there.
+                    std::int64_t replyTo = 0;
+                    if (json.isMember("reply_to") && !json["reply_to"].isNull()) {
+                        if (!json["reply_to"].isIntegral()) {
+                            throw HttpError{400, "reply_to must be a message id"};
+                        }
+                        auto parent = db.prepare(
+                            "SELECT 1 FROM messages WHERE id = ? AND room_id = ? "
+                            "AND deleted_at IS NULL");
+                        parent.bind(1, json["reply_to"].asInt64()).bind(2, roomId);
+                        if (!parent.step()) {
+                            throw HttpError{400, "that message is not here to reply to"};
+                        }
+                        replyTo = json["reply_to"].asInt64();
+                    }
+
                     Transaction tx{db};
                     auto insert = db.prepare(
                         "INSERT INTO messages (room_id, user_id, author_name, body, "
-                        "created_at) VALUES (?, ?, ?, ?, ?)");
+                        "created_at, reply_to) VALUES (?, ?, ?, ?, ?, ?)");
                     insert.bind(1, roomId).bind(2, user.id).bind(3, user.username)
-                        .bind(4, body).bind(5, nowSeconds()).run();
+                        .bind(4, body).bind(5, nowSeconds());
+                    replyTo ? insert.bind(6, replyTo) : insert.bindNull(6);
+                    insert.run();
                     const std::int64_t messageId = db.lastInsertId();
 
                     // In the same transaction as the message: a message that is visible
@@ -690,9 +764,11 @@ void registerChatRoutes(Database& db, Auth& auth) {
                         "                WHERE mn.message_id = m.id AND mn.user_id = ?4), "
                         // Profile fields, live like the role: they belong to the person now.
                         "         COALESCE(a.display_name, ''), COALESCE(a.avatar, ''), "
-                        "         COALESCE(m.user_id, 0), m.edited_at "
+                        "         COALESCE(m.user_id, 0), m.edited_at, m.reply_to, m.pinned_at, "
+                        "         COALESCE(pb.username, '') "
                         "  FROM messages m LEFT JOIN users d ON d.id = m.deleted_by "
                         "  LEFT JOIN users a ON a.id = m.user_id "
+                        "  LEFT JOIN users pb ON pb.id = m.pinned_by "
                         "  WHERE m.room_id = ?1 AND " + where + " ORDER BY m.id DESC LIMIT ?3"
                         ") ORDER BY 1");
                     stmt.bind(1, roomId).bind(2, value).bind(3, limit).bind(4, user.id);
@@ -730,6 +806,13 @@ void registerChatRoutes(Database& db, Auth& auth) {
                         }
                         if (stmt.columnInt(8) != 0) {
                             message["mentions_me"] = true;
+                        }
+                        if (!stmt.columnIsNull(13) && stmt.columnIsNull(4)) {
+                            message["reply_to"]["id"] = static_cast<Json::Int64>(stmt.columnInt(13));
+                        }
+                        if (!stmt.columnIsNull(14) && stmt.columnIsNull(4)) {
+                            message["pinned"]["at"] = static_cast<Json::Int64>(stmt.columnInt(14));
+                            message["pinned"]["by"] = stmt.columnText(15);
                         }
                         if (lowest == 0) {
                             lowest = id;
@@ -784,6 +867,78 @@ void registerChatRoutes(Database& db, Auth& auth) {
                                 card["title"] = links.columnText(2);
                             }
                             messages[found->second]["shares"].append(card);
+                        }
+                    }
+
+                    // What each reply answers: who, and the start of what they said — or
+                    // that it has since been removed. Parents can be anywhere in the room's
+                    // history, so they are looked up by id rather than by range.
+                    if (!positions.empty()) {
+                        auto parents = db.prepare(
+                            "SELECT c.id, p.id, p.author_name, p.body, p.deleted_at IS NOT NULL, "
+                            "       COALESCE(a.display_name, ''), "
+                            "       EXISTS(SELECT 1 FROM message_shares s WHERE s.message_id = p.id) "
+                            "FROM messages c JOIN messages p ON p.id = c.reply_to "
+                            "LEFT JOIN users a ON a.id = p.user_id "
+                            "WHERE c.room_id = ? AND c.id BETWEEN ? AND ? AND c.deleted_at IS NULL");
+                        parents.bind(1, roomId).bind(2, lowest).bind(3, highest);
+                        while (parents.step()) {
+                            const auto found = positions.find(parents.columnInt(0));
+                            if (found == positions.end()) {
+                                continue;
+                            }
+                            Json::Value& quoted = messages[found->second]["reply_to"];
+                            quoted["id"] = static_cast<Json::Int64>(parents.columnInt(1));
+                            quoted["author"] = parents.columnText(2);
+                            if (const std::string shown = parents.columnText(5); !shown.empty()) {
+                                quoted["author_display_name"] = shown;
+                            }
+                            if (parents.columnInt(4) != 0) {
+                                quoted["deleted"] = true;
+                            } else {
+                                quoted["excerpt"] = excerpt(parents.columnText(3), kQuoteChars);
+                                if (parents.columnInt(6) != 0) {
+                                    quoted["has_links"] = true;
+                                }
+                            }
+                        }
+                    }
+
+                    // Reactions, as one entry per emoji in the order first used: how many,
+                    // whether I am among them, and who, for the tooltip.
+                    if (!positions.empty()) {
+                        auto reactions = db.prepare(
+                            "SELECT r.message_id, r.emoji, u.username, r.user_id = ? "
+                            "FROM message_reactions r JOIN messages m ON m.id = r.message_id "
+                            "JOIN users u ON u.id = r.user_id "
+                            "WHERE m.room_id = ? AND r.message_id BETWEEN ? AND ? "
+                            "ORDER BY r.message_id, r.created_at, r.rowid");
+                        reactions.bind(1, user.id).bind(2, roomId).bind(3, lowest).bind(4, highest);
+                        while (reactions.step()) {
+                            const auto found = positions.find(reactions.columnInt(0));
+                            if (found == positions.end()) {
+                                continue;
+                            }
+                            Json::Value& list = messages[found->second]["reactions"];
+                            const std::string emoji = reactions.columnText(1);
+                            Json::Value* entry = nullptr;
+                            for (auto& existing : list) {
+                                if (existing["emoji"].asString() == emoji) {
+                                    entry = &existing;
+                                }
+                            }
+                            if (entry == nullptr) {
+                                Json::Value fresh;
+                                fresh["emoji"] = emoji;
+                                fresh["count"] = 0;
+                                fresh["mine"] = false;
+                                entry = &list.append(fresh);
+                            }
+                            (*entry)["count"] = (*entry)["count"].asInt() + 1;
+                            (*entry)["names"].append(reactions.columnText(2));
+                            if (reactions.columnInt(3) != 0) {
+                                (*entry)["mine"] = true;
+                            }
                         }
                     }
                     return messages;
@@ -936,16 +1091,20 @@ void registerChatRoutes(Database& db, Auth& auth) {
                 Transaction tx{db};
                 auto stmt = db.prepare(
                     "UPDATE messages SET deleted_at = ?, deleted_by = ?, body = '', "
-                    "updated_at = ? WHERE id = ? AND deleted_at IS NULL");
+                    "updated_at = ?, pinned_at = NULL, pinned_by = NULL "
+                    "WHERE id = ? AND deleted_at IS NULL");
                 stmt.bind(1, now).bind(2, user.id).bind(3, now).bind(4, messageId).run();
                 if (db.changes() == 0) {
                     throw HttpError{404, "no such message"};
                 }
                 auto mentions = db.prepare("DELETE FROM message_mentions WHERE message_id = ?");
                 mentions.bind(1, messageId).run();
-                // Links it carried are part of what was said, so they go too.
+                // Links it carried are part of what was said, so they go too; and what
+                // people made of it — reactions, a pin — has nothing left to be about.
                 auto links = db.prepare("DELETE FROM message_shares WHERE message_id = ?");
                 links.bind(1, messageId).run();
+                auto reactions = db.prepare("DELETE FROM message_reactions WHERE message_id = ?");
+                reactions.bind(1, messageId).run();
                 tx.commit();
                 if (!mine) {
                     // Which room and whose message — never what it said, which is now gone.
@@ -965,6 +1124,148 @@ void registerChatRoutes(Database& db, Auth& auth) {
             }));
         },
         {drogon::Delete, drogon::Patch});
+
+    // ---- reactions and pins --------------------------------------------------------
+    // Both are open to anyone in the room, on any message still there, and both touch
+    // updated_at so the next poll everywhere shows them.
+    const auto liveMessageIn = [&db](std::int64_t messageId, const User& user) {
+        auto find = db.prepare(
+            "SELECT room_id FROM messages WHERE id = ? AND deleted_at IS NULL");
+        find.bind(1, messageId);
+        if (!find.step()) {
+            throw HttpError{404, "no such message"};
+        }
+        return requireRoomMember(db, find.columnInt(0), user);
+    };
+
+    // {emoji, on}: on adds my reaction, off takes it back.
+    app.registerHandler(
+        "/api/chat/messages/{id}/reactions",
+        [&db, &auth, liveMessageIn](const drogon::HttpRequestPtr& req,
+                                    std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                                    const std::string& id) {
+            callback(guarded([&] {
+                const User user = requireUser(req, auth);
+                const std::int64_t messageId = parseId(id, "message");
+                liveMessageIn(messageId, user);
+                std::shared_ptr<Json::Value> holder;
+                const Json::Value& json = requireJson(req, holder);
+                const std::string emoji = requireString(json, "emoji");
+                if (!isReaction(emoji)) {
+                    throw HttpError{400, "a reaction is a single emoji"};
+                }
+                const bool on = !json.isMember("on") || json["on"].asBool();
+                const std::int64_t now = nowSeconds();
+                Transaction tx{db};
+                if (on) {
+                    auto count = db.prepare(
+                        "SELECT COUNT(*) FROM message_reactions WHERE message_id = ? AND user_id = ?");
+                    count.bind(1, messageId).bind(2, user.id);
+                    count.step();
+                    if (count.columnInt(0) >= kMaxReactionsPerPerson) {
+                        throw HttpError{409, "that is enough reactions to one message"};
+                    }
+                    auto add = db.prepare(
+                        "INSERT INTO message_reactions (message_id, user_id, emoji, created_at) "
+                        "VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING");
+                    add.bind(1, messageId).bind(2, user.id).bind(3, emoji).bind(4, now).run();
+                } else {
+                    auto remove = db.prepare(
+                        "DELETE FROM message_reactions WHERE message_id = ? AND user_id = ? "
+                        "AND emoji = ?");
+                    remove.bind(1, messageId).bind(2, user.id).bind(3, emoji).run();
+                }
+                auto touch = db.prepare("UPDATE messages SET updated_at = ? WHERE id = ?");
+                touch.bind(1, now).bind(2, messageId).run();
+                tx.commit();
+                Json::Value out;
+                out["ok"] = true;
+                return drogon::HttpResponse::newHttpJsonResponse(out);
+            }));
+        },
+        {drogon::Post});
+
+    // {pinned: true|false}
+    app.registerHandler(
+        "/api/chat/messages/{id}/pin",
+        [&db, &auth, liveMessageIn](const drogon::HttpRequestPtr& req,
+                                    std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                                    const std::string& id) {
+            callback(guarded([&] {
+                const User user = requireUser(req, auth);
+                const std::int64_t messageId = parseId(id, "message");
+                const std::int64_t roomId = liveMessageIn(messageId, user);
+                std::shared_ptr<Json::Value> holder;
+                const Json::Value& json = requireJson(req, holder);
+                if (!json.isMember("pinned") || !json["pinned"].isBool()) {
+                    throw HttpError{400, "pinned must be true or false"};
+                }
+                const bool pin = json["pinned"].asBool();
+                const std::int64_t now = nowSeconds();
+                if (pin) {
+                    auto count = db.prepare(
+                        "SELECT COUNT(*) FROM messages WHERE room_id = ? AND pinned_at IS NOT NULL");
+                    count.bind(1, roomId);
+                    count.step();
+                    if (count.columnInt(0) >= kMaxPinsPerRoom) {
+                        throw HttpError{409, "this room has as many pins as it can hold — unpin one first"};
+                    }
+                    auto stmt = db.prepare(
+                        "UPDATE messages SET pinned_at = ?, pinned_by = ?, updated_at = ? "
+                        "WHERE id = ? AND pinned_at IS NULL");
+                    stmt.bind(1, now).bind(2, user.id).bind(3, now).bind(4, messageId).run();
+                } else {
+                    auto stmt = db.prepare(
+                        "UPDATE messages SET pinned_at = NULL, pinned_by = NULL, updated_at = ? "
+                        "WHERE id = ?");
+                    stmt.bind(1, now).bind(2, messageId).run();
+                }
+                Json::Value out;
+                out["pinned"] = pin;
+                return drogon::HttpResponse::newHttpJsonResponse(out);
+            }));
+        },
+        {drogon::Post});
+
+    // A room's pinned messages, most recently pinned first.
+    app.registerHandler(
+        "/api/chat/rooms/{id}/pins",
+        [&db, &auth](const drogon::HttpRequestPtr& req,
+                     std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                     const std::string& id) {
+            callback(guarded([&] {
+                const User user = requireUser(req, auth);
+                const std::int64_t roomId = requireRoomMember(db, parseId(id, "room"), user);
+                auto stmt = db.prepare(
+                    "SELECT m.id, m.author_name, COALESCE(a.display_name, ''), m.body, "
+                    "       m.created_at, m.pinned_at, COALESCE(pb.username, '') "
+                    "FROM messages m LEFT JOIN users a ON a.id = m.user_id "
+                    "LEFT JOIN users pb ON pb.id = m.pinned_by "
+                    "WHERE m.room_id = ? AND m.pinned_at IS NOT NULL AND m.deleted_at IS NULL "
+                    "ORDER BY m.pinned_at DESC, m.id DESC");
+                stmt.bind(1, roomId);
+                Json::Value pins{Json::arrayValue};
+                while (stmt.step()) {
+                    Json::Value pin;
+                    pin["id"] = static_cast<Json::Int64>(stmt.columnInt(0));
+                    pin["author"] = stmt.columnText(1);
+                    if (const std::string shown = stmt.columnText(2); !shown.empty()) {
+                        pin["author_display_name"] = shown;
+                    }
+                    pin["excerpt"] = excerpt(stmt.columnText(3), kQuoteChars);
+                    pin["created_at"] = static_cast<Json::Int64>(stmt.columnInt(4));
+                    pin["pinned_at"] = static_cast<Json::Int64>(stmt.columnInt(5));
+                    pin["pinned_by"] = stmt.columnText(6);
+                    pins.append(pin);
+                }
+                Json::Value out;
+                out["pins"] = pins;
+                auto resp = drogon::HttpResponse::newHttpJsonResponse(out);
+                resp->addHeader("Cache-Control", "no-store");
+                return resp;
+            }));
+        },
+        {drogon::Get});
 
     // ---- blocks ---------------------------------------------------------------------
     app.registerHandler(

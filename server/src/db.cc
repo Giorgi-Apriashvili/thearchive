@@ -395,7 +395,26 @@ CREATE INDEX idx_messages_updated ON messages(room_id, updated_at);
 ALTER TABLE rooms ADD COLUMN topic TEXT;
 )SQL";
 
-constexpr std::array<Migration, 19> kMigrations{{
+// Replies, reactions and pins. A reply points at the message it answers, in the same
+// room; if that message is later removed the reply says so rather than dangling.
+// Reactions are one row per person per emoji. Pinning is a pair of columns on the message.
+// Each of these changes a message, so each also sets messages.updated_at — that is how the
+// next poll everywhere picks them up.
+constexpr const char* kSchemaV20 = R"SQL(
+ALTER TABLE messages ADD COLUMN reply_to INTEGER REFERENCES messages(id) ON DELETE SET NULL;
+ALTER TABLE messages ADD COLUMN pinned_at INTEGER;
+ALTER TABLE messages ADD COLUMN pinned_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
+CREATE INDEX idx_messages_pinned ON messages(room_id, pinned_at) WHERE pinned_at IS NOT NULL;
+CREATE TABLE message_reactions (
+    message_id  INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    emoji       TEXT    NOT NULL,
+    created_at  INTEGER NOT NULL,
+    PRIMARY KEY (message_id, user_id, emoji)
+);
+)SQL";
+
+constexpr std::array<Migration, 20> kMigrations{{
     {1, kSchemaV1},
     {2, kSchemaV2},
     {3, kSchemaV3},
@@ -415,6 +434,7 @@ constexpr std::array<Migration, 19> kMigrations{{
     {17, kSchemaV17},
     {18, kSchemaV18},
     {19, kSchemaV19},
+    {20, kSchemaV20},
 }};
 
 }  // namespace

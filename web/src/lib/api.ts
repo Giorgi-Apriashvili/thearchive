@@ -176,6 +176,19 @@ export interface RoomMember {
   since: number
   is_creator: boolean
   role: string
+  /** How far a member has read, for "seen by". Members only, not invitations. */
+  read_up_to?: number
+}
+
+/** A pinned message, as the room's pin list shows it. */
+export interface PinnedMessage {
+  id: number
+  author: string
+  author_display_name?: string
+  excerpt: string
+  created_at: number
+  pinned_at: number
+  pinned_by: string
 }
 
 export interface RoomMembers {
@@ -212,6 +225,18 @@ export interface ChatMessage {
   mentions_me?: boolean
   /** Set when the author has edited it; the text served is the edited one. */
   edited_at?: number
+  /** What this message answers. `deleted` once that has been removed. */
+  reply_to?: {
+    id: number
+    author?: string
+    author_display_name?: string
+    excerpt?: string
+    has_links?: boolean
+    deleted?: boolean
+  }
+  /** One entry per emoji, in the order first used. */
+  reactions?: { emoji: string; count: number; mine: boolean; names: string[] }[]
+  pinned?: { by: string; at: number }
   /** Links attached to the message, resolved when it was read. */
   shares?: ShareCard[]
 }

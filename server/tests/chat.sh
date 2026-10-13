@@ -425,6 +425,53 @@ check "it is recorded" "$(sql "SELECT detail FROM activity WHERE event='chat.roo
 check "an administrator can delete anyone's" "$(code "$ALICE" DELETE "/api/chat/rooms/$DAVEROOM")" "200"
 
 echo
+echo "=== replies, reactions, pins and seen by ==="
+G3=$(as "$ALICE" POST /api/chat/rooms '{"name":"Group three"}' | jf id)
+as "$ALICE" POST "/api/chat/rooms/$G3/invite" '{"username":"bob"}' >/dev/null
+as "$BOB" POST "/api/chat/rooms/$G3/respond" '{"action":"accept"}' >/dev/null
+Q=$(as "$ALICE" POST "/api/chat/rooms/$G3/messages" '{"body":"who has the car keys?\nasking for the trip"}' | jf id)
+msg() { as "$1" GET "/api/chat/rooms/$G3/messages" | py "import sys,json;m=[x for x in json.load(sys.stdin)['messages'] if x['id']==$2][0];print($3)"; }
+R1=$(as "$BOB" POST "/api/chat/rooms/$G3/messages" "{\"body\":\"I do\",\"reply_to\":$Q}" | jf id)
+check "a reply carries what it answers" "$(msg "$ALICE" "$R1" "m['reply_to']['author'], m['reply_to']['excerpt']")" "alice who has the car keys? asking for the trip"
+check "a reply to nothing is refused" "$(code "$BOB" POST "/api/chat/rooms/$G3/messages" '{"body":"?","reply_to":999999}')" "400"
+OTHERQ=$(as "$ALICE" POST "/api/chat/rooms/$ROOM/messages" '{"body":"elsewhere"}' | jf id)
+check "as is a reply into another room" "$(code "$BOB" POST "/api/chat/rooms/$G3/messages" "{\"body\":\"?\",\"reply_to\":$OTHERQ}")" "400"
+
+T1=$(as "$ALICE" GET "/api/chat/rooms/$G3/messages" | jf now)
+check "bob reacts" "$(code "$BOB" POST "/api/chat/messages/$Q/reactions" '{"emoji":"👍"}')" "200"
+check "and alice too, twice over" "$(code "$ALICE" POST "/api/chat/messages/$Q/reactions" '{"emoji":"👍"}'),$(code "$ALICE" POST "/api/chat/messages/$Q/reactions" '{"emoji":"👍"}')" "200,200"
+check "one entry, counted once each, mine marked, names listed" \
+    "$(msg "$ALICE" "$Q" "[(r['emoji'], r['count'], r['mine'], r['names']) for r in m['reactions']]")" "[('👍', 2, True, ['bob', 'alice'])]"
+check "a poll that already has the message learns of it" \
+    "$(as "$ALICE" GET "/api/chat/rooms/$G3/messages?since=$R1&changed=$T1" | py "import sys,json;print([len(m.get('reactions', [])) for m in json.load(sys.stdin)['changed']])")" "[1]"
+check "taking one back" "$(code "$ALICE" POST "/api/chat/messages/$Q/reactions" '{"emoji":"👍","on":false}'),$(msg "$ALICE" "$Q" "m['reactions'][0]['count'], m['reactions'][0]['mine']")" "200,1 False"
+check "a word is not a reaction" "$(code "$BOB" POST "/api/chat/messages/$Q/reactions" '{"emoji":"lol"}')" "400"
+check "nor hidden direction marks" "$(code "$BOB" POST "/api/chat/messages/$Q/reactions" '{"emoji":"👍\u202E"}')" "400"
+check "nor a long run of emoji" "$(code "$BOB" POST "/api/chat/messages/$Q/reactions" '{"emoji":"😀😀😀😀😀😀😀😀😀"}')" "400"
+check "a joined emoji is fine" "$(code "$BOB" POST "/api/chat/messages/$Q/reactions" '{"emoji":"👍🏽"}')" "200"
+check "outsiders cannot react" "$(code "$CAROL" POST "/api/chat/messages/$Q/reactions" '{"emoji":"👍"}')" "404"
+
+check "anyone in the room can pin" "$(code "$BOB" POST "/api/chat/messages/$Q/pin" '{"pinned":true}')" "200"
+check "the message says so" "$(msg "$ALICE" "$Q" "m['pinned']['by']")" "bob"
+check "and the room's pin list has it" \
+    "$(as "$ALICE" GET "/api/chat/rooms/$G3/pins" | py "import sys,json;print([(p['id'], p['pinned_by'], p['excerpt']) for p in json.load(sys.stdin)['pins']])")" \
+    "[($Q, 'bob', 'who has the car keys? asking for the trip')]"
+check "outsiders cannot see it" "$(code "$CAROL" GET "/api/chat/rooms/$G3/pins")" "404"
+check "unpinning" "$(code "$ALICE" POST "/api/chat/messages/$Q/pin" '{"pinned":false}'),$(as "$ALICE" GET "/api/chat/rooms/$G3/pins" | py "import sys,json;print(len(json.load(sys.stdin)['pins']))")" "200,0"
+
+as "$BOB" POST "/api/chat/messages/$Q/pin" '{"pinned":true}' >/dev/null
+as "$ALICE" DELETE "/api/chat/messages/$Q" >/dev/null
+check "removing a message takes its pin" "$(as "$ALICE" GET "/api/chat/rooms/$G3/pins" | py "import sys,json;print(len(json.load(sys.stdin)['pins']))")" "0"
+check "and its reactions" "$(sql "SELECT COUNT(*) FROM message_reactions WHERE message_id=$Q;")" "0"
+check "and the reply says it answered something removed" "$(msg "$BOB" "$R1" "m['reply_to'].get('deleted'), 'excerpt' in m['reply_to']")" "True False"
+check "a removed message cannot be replied to" "$(code "$BOB" POST "/api/chat/rooms/$G3/messages" "{\"body\":\"?\",\"reply_to\":$Q}")" "400"
+
+as "$BOB" POST "/api/chat/rooms/$G3/read" "{\"last_id\":$R1}" >/dev/null
+check "members show how far each has read" \
+    "$(as "$ALICE" GET "/api/chat/rooms/$G3/members" | py "import sys,json;print(sorted((m['username'], m['read_up_to'] >= $R1) for m in json.load(sys.stdin)['members']))")" \
+    "[('alice', False), ('bob', True)]"
+
+echo
 echo "=== declining ==="
 as "$ALICE" POST "/api/chat/rooms/$ROOM/invite" '{"username":"carol"}' >/dev/null
 check "carol declines" \

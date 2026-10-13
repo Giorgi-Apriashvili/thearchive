@@ -11,7 +11,7 @@
 // otherwise a new message would go unannounced until you happened to open the chat tab,
 // which rather defeats the point. Messages poll quickly, and only while a room is open.
 
-import { api, ApiError, type ChatMessage, type ChatRoom, type RoomMembers } from './api'
+import { api, ApiError, type ChatMessage, type ChatRoom, type PinnedMessage, type RoomMembers } from './api'
 import { notify } from './notify.svelte'
 
 const MESSAGE_MS = 2000
@@ -37,6 +37,8 @@ class ChatStore {
   /** Who is in the open room. Feeds the header's member list and the composer's @
    *  autocomplete, which is why it is here rather than local to a component. */
   members = $state<RoomMembers | null>(null)
+  /** The open room's pinned messages, newest pin first. */
+  pins = $state<PinnedMessage[]>([])
 
   #roomTimer: ReturnType<typeof setInterval> | null = null
   #messageTimer: ReturnType<typeof setInterval> | null = null
@@ -136,6 +138,7 @@ class ChatStore {
     this.openId = id
     this.messages = []
     this.members = null
+    this.pins = []
     this.messagesError = ''
     this.#cursor = 0
     this.#marked = 0
@@ -144,9 +147,20 @@ class ChatStore {
     if (id === null) return
     this.loadingMessages = true
     try {
-      await Promise.all([this.#pollMessages(), this.loadMembers()])
+      await Promise.all([this.#pollMessages(), this.loadMembers(), this.loadPins()])
     } finally {
       this.loadingMessages = false
+    }
+  }
+
+  async loadPins() {
+    const room = this.openId
+    if (room === null) return
+    try {
+      const { pins } = await api.get<{ pins: PinnedMessage[] }>(`/api/chat/rooms/${room}/pins`)
+      if (this.openId === room) this.pins = pins
+    } catch {
+      // The header simply shows no pins until the next try.
     }
   }
 
@@ -192,11 +206,14 @@ class ChatStore {
       if (data.messages.length) {
         this.#cursor = Math.max(this.#cursor, ...data.messages.map((m) => m.id))
       }
-      // Edits and removals of messages already held replace them where they stand.
+      // Edits, removals, reactions and pins on messages already held replace them where
+      // they stand. Any of those might have pinned or unpinned something, so the pin list
+      // is re-read too — rarely, since most polls report no change at all.
       for (const updated of data.changed ?? []) {
         const at = this.messages.findIndex((m) => m.id === updated.id)
         if (at >= 0) this.messages[at] = updated
       }
+      if (data.changed?.length) void this.loadPins()
       this.#changedSince = data.now
       this.messagesError = ''
       await this.#markRead(room)

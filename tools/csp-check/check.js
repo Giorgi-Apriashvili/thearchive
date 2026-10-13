@@ -183,6 +183,29 @@ const PASS = 'correct-horse-battery'
     await page.getByPlaceholder('Message CSP test').fill('')
   })
 
+  await step('chat: react, reply and pin', async () => {
+    const target = page.locator('.group', { hasText: 'not html' }).first()
+    await target.hover()
+    await target.getByRole('button', { name: 'React', exact: true }).click()
+    await page.getByRole('button', { name: 'React 👍' }).click()
+    await target.getByRole('button', { name: /👍\s*1/ }).waitFor()
+
+    await target.hover()
+    await target.getByRole('button', { name: 'Reply', exact: true }).click()
+    await page.getByText(/^Replying to/).first().waitFor()
+    await page.getByPlaceholder('Message CSP test').fill('replying to that')
+    await page.getByRole('button', { name: 'Send' }).click()
+    const reply = page.locator('.group', { hasText: 'replying to that' }).first()
+    await reply.waitFor()
+    await reply.getByRole('button', { name: /not html/ }).click() // the quote leads back
+
+    await target.hover()
+    await target.getByRole('button', { name: 'Pin', exact: true }).click()
+    await page.getByRole('button', { name: 'Pinned (1)' }).click()
+    await page.getByRole('button', { name: /pinned by alice/ }).click()
+    await target.getByText('Pinned by alice').waitFor()
+  })
+
   await step('chat: edit your own message', async () => {
     const message = page.locator('.group', { hasText: 'see https://example.com' }).first()
     await message.hover()

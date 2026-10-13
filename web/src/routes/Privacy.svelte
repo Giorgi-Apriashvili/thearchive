@@ -123,7 +123,8 @@
           </li>
           <li>
             <strong>Chat:</strong> your messages, the rooms, invitations and how you answered
-            them, anyone you have blocked, who a message @mentioned, and how far you have read.
+            them, anyone you have blocked, who a message @mentioned, your reactions and what you
+            pinned, and how far you have read.
           </li>
           <li>
             <strong>Records kept for security and upkeep:</strong> failed password attempts, with
@@ -179,7 +180,8 @@
           </li>
           <li>
             <strong>Chat:</strong> every member can see the names of all rooms; what is said in a
-            room only its members can see.
+            room only its members can see. They also see your reactions, what you pinned, and how
+            far you have read there — "seen by" under the latest message.
           </li>
           <li>
             <strong>Administrators</strong> can see the list of accounts and every link and file,

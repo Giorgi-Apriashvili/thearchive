@@ -5,7 +5,16 @@
   // the rest of what that device shows.
   import { fade } from 'svelte/transition'
 
-  let { onPick, onClose }: { onPick: (emoji: string) => void; onClose: () => void } = $props()
+  let {
+    onPick,
+    onClose,
+    placement = 'above',
+  }: {
+    onPick: (emoji: string) => void
+    onClose: () => void
+    /** Above the composer, or below a message's reaction button. */
+    placement?: 'above' | 'below'
+  } = $props()
 
   const groups: { label: string; emoji: string[] }[] = [
     { label: 'Faces', emoji: ['😀', '😄', '😂', '🤣', '😊', '😍', '🥰', '😘', '😎', '🤩', '🥳', '😏', '😅', '🙃', '😉', '🤔', '🤨', '😐', '😴', '🤤', '😬', '😮', '😱', '😢', '😭', '😤', '😡', '🤯', '🥶', '🤢', '🤡', '💀'] },
@@ -22,7 +31,10 @@
 <div
   role="dialog"
   aria-label="Emoji"
-  class="absolute bottom-full left-0 z-40 mb-2 max-h-72 w-72 overflow-y-auto rounded-xl border border-ink-700 bg-ink-900 p-2 shadow-xl"
+  class="absolute z-40 max-h-72 w-72 overflow-y-auto rounded-xl border border-ink-700 bg-ink-900 p-2 shadow-xl {placement ===
+  'above'
+    ? 'bottom-full left-0 mb-2'
+    : 'right-0 top-full mt-1'}"
   transition:fade={{ duration: 100 }}
 >
   {#each groups as group (group.label)}

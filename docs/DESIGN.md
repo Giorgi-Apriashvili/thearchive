@@ -919,6 +919,30 @@ word edges, so snake_case does not italicise. The emoji picker is a short curate
 the device's own emoji; its button is drawn, since a character would be an empty box on a
 device without an emoji font.
 
+### Replies, reactions, pins and "seen by"
+
+A reply points at a message still there in the same room (`messages.reply_to`); the
+reply carries its quote — who, and the first 120 characters — resolved when read, so a
+later edit shows and a later removal reads as "a removed message". The quote leads back:
+clicking it scrolls to the original, loading older pages until it is found.
+
+Reactions are one row per person per emoji (`message_reactions`), sent as one entry per
+emoji with a count, whether I am among them, and who. A reaction must be an emoji: at
+most 32 bytes, no ASCII at all, and none of the direction controls that reorder text — so
+a chip cannot carry a message of its own. Eight per person per message.
+
+Any member can pin or unpin (`messages.pinned_at`/`pinned_by`, at most 50 per room); the
+header lists them. Removing a message drops its reactions and pin with it.
+
+All three set `messages.updated_at`, so they reach everyone through the same `changed`
+poll as edits — nothing new to deliver them. "Seen by" reads each member's `last_read_id`
+from the members list, already polled: under the latest message, whoever has read up to
+it, not counting me or its author. Read positions were always stored, for unread counts;
+showing them to the room is new, and the privacy notice says so.
+
+On a touch screen there is no hover, so a tap on a message shows its actions; hidden ones
+take no taps at all, since an invisible Remove under a thumb would be found by accident.
+
 ### Notifications
 
 Pop-ups while the site is open, for an unread mention, an unseen send of links, or an
