@@ -18,6 +18,19 @@ export interface Segment {
   href?: string
   /** The username on a mention run. Runs with neither are plain text. */
   mention?: string
+  // Light formatting, as flags on a run rather than markup — see parseBlocks.
+  bold?: boolean
+  italic?: boolean
+  strike?: boolean
+  code?: boolean
+}
+
+/** A paragraph, a `>` quote, or a fenced code block. */
+export interface Block {
+  kind: 'text' | 'quote' | 'code'
+  /** Runs for text and quotes; a code block is shown exactly as typed, in `text`. */
+  segments: Segment[]
+  text: string
 }
 
 const URL_PATTERN = /https?:\/\/[^\s<>]+/gi
@@ -88,7 +101,7 @@ const MENTION_PATTERN = /(^|[^\w.-])@([\w.-]+)/g
 // not in it stays plain text, which is what makes `@someone-who-left` read as the text
 // it now is rather than as a live reference to nobody.
 function markMentions(segment: Segment, mentions: string[]): Segment[] {
-  if (segment.href !== undefined || mentions.length === 0) return [segment]
+  if (segment.href !== undefined || segment.code || mentions.length === 0) return [segment]
 
   const out: Segment[] = []
   const body = segment.text
@@ -99,17 +112,112 @@ function markMentions(segment: Segment, mentions: string[]): Segment[] {
     if (!mentions.includes(name)) continue
     // match.index points at the boundary character, if any; the @ follows it.
     const at = (match.index ?? 0) + match[1].length
-    if (at > cursor) out.push({ text: body.slice(cursor, at) })
-    out.push({ text: `@${match[2]}`, mention: name })
+    // Spread, so a mention inside **bold** stays bold.
+    if (at > cursor) out.push({ ...segment, text: body.slice(cursor, at) })
+    out.push({ ...segment, text: `@${match[2]}`, mention: name })
     cursor = at + 1 + match[2].length
   }
 
   if (out.length === 0) return [segment]
-  if (cursor < body.length) out.push({ text: body.slice(cursor) })
+  if (cursor < body.length) out.push({ ...segment, text: body.slice(cursor) })
   return out
 }
 
 /** Link and mention runs for one message body. */
 export function parseMessage(body: string, mentions: string[] = []): Segment[] {
   return linkify(body).flatMap((segment) => markMentions(segment, mentions))
+}
+
+// ---- light formatting -------------------------------------------------------------
+//
+// The handful people type without thinking — **bold**, *italic* or _italic_, ~~struck~~,
+// `code`, a ```fenced block```, and > quoted lines — and nothing else: no headings, no
+// lists, no HTML, no images. Same rule as everything above: the result is data, flags on
+// runs and blocks, so Svelte still escapes every character another person typed.
+//
+// Inline code is taken out first and left alone — formatting inside it is literal, which
+// is the point of code. Emphasis is then found only in plain runs, after links: a URL with
+// underscores or asterisks in it stays a URL. Underscores count only at word edges, so
+// snake_case_names are not italicised.
+
+const INLINE_CODE = /`([^`\n]+)`/g
+const EMPHASIS: [RegExp, keyof Segment][] = [
+  [/\*\*(?=\S)([\s\S]*?\S)\*\*/g, 'bold'],
+  [/~~(?=\S)([\s\S]*?\S)~~/g, 'strike'],
+  [/(?<![\w*])\*(?=[^\s*])([^*]*?[^\s*])\*(?![\w*])/g, 'italic'],
+  [/(?<!\w)_(?=[^\s_])([^_]*?[^\s_])_(?!\w)/g, 'italic'],
+]
+
+function emphasise(segment: Segment): Segment[] {
+  if (segment.href !== undefined || segment.code) return [segment]
+  for (const [pattern, flag] of EMPHASIS) {
+    pattern.lastIndex = 0
+    const match = pattern.exec(segment.text)
+    if (!match) continue
+    const before = segment.text.slice(0, match.index)
+    const after = segment.text.slice(match.index + match[0].length)
+    const out: Segment[] = []
+    if (before) out.push(...emphasise({ ...segment, text: before }))
+    out.push(...emphasise({ ...segment, text: match[1], [flag]: true }))
+    if (after) out.push(...emphasise({ ...segment, text: after }))
+    return out
+  }
+  return [segment]
+}
+
+function inline(text: string, mentions: string[]): Segment[] {
+  const out: Segment[] = []
+  let cursor = 0
+  const plain = (from: number, to: number) => {
+    if (to <= from) return
+    // Emphasis before mentions, so **bold @bob** is one bold run with a mention in it.
+    for (const run of linkify(text.slice(from, to))) {
+      for (const styled of emphasise(run)) out.push(...markMentions(styled, mentions))
+    }
+  }
+  for (const match of text.matchAll(INLINE_CODE)) {
+    const start = match.index ?? 0
+    plain(cursor, start)
+    out.push({ text: match[1], code: true })
+    cursor = start + match[0].length
+  }
+  plain(cursor, text.length)
+  return out
+}
+
+/** A message as blocks of formatted runs, for display. */
+export function parseBlocks(body: string, mentions: string[] = []): Block[] {
+  const blocks: Block[] = []
+  const lines = body.split('\n')
+  let text: string[] = []
+  let quote: string[] = []
+  const flush = () => {
+    if (text.length) blocks.push({ kind: 'text', text: text.join('\n'), segments: inline(text.join('\n'), mentions) })
+    if (quote.length) blocks.push({ kind: 'quote', text: quote.join('\n'), segments: inline(quote.join('\n'), mentions) })
+    text = []
+    quote = []
+  }
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+    if (line.trimStart().startsWith('```')) {
+      // A fence runs to the next fence line, or to the end if it is never closed.
+      const end = lines.findIndex((l, j) => j > i && l.trimStart().startsWith('```'))
+      const stop = end === -1 ? lines.length : end
+      flush()
+      const opener = line.trimStart().slice(3).trim()
+      const content = [...(opener ? [opener] : []), ...lines.slice(i + 1, stop)].join('\n')
+      blocks.push({ kind: 'code', text: content, segments: [] })
+      i = stop
+      continue
+    }
+    if (/^>\s?/.test(line)) {
+      if (text.length) flush()
+      quote.push(line.replace(/^>\s?/, ''))
+    } else {
+      if (quote.length) flush()
+      text.push(line)
+    }
+  }
+  flush()
+  return blocks
 }

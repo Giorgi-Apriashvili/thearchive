@@ -59,6 +59,32 @@ export function chatTime(epochSeconds: number): string {
   return `${day} ${clock}`
 }
 
+/** Time of day alone, for messages under a date divider that already says which day. */
+export function clockTime(epochSeconds: number): string {
+  return new Date(epochSeconds * 1000).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+}
+
+/** The local calendar day of a timestamp, for telling whether two fall on the same one. */
+export function dayKey(epochSeconds: number): string {
+  return new Date(epochSeconds * 1000).toDateString()
+}
+
+/** A chat date divider: "Today", "Yesterday", a weekday within the week, else a date. */
+export function dayLabel(epochSeconds: number): string {
+  const at = new Date(epochSeconds * 1000)
+  const startOf = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
+  const days = Math.round((startOf(new Date()) - startOf(at)) / 86400000)
+  if (days === 0) return 'Today'
+  if (days === 1) return 'Yesterday'
+  if (days > 1 && days < 7) return at.toLocaleDateString(undefined, { weekday: 'long' })
+  return at.toLocaleDateString(undefined, {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    ...(at.getFullYear() === new Date().getFullYear() ? {} : { year: 'numeric' }),
+  })
+}
+
 export function shortDate(epochSeconds: number): string {
   return new Date(epochSeconds * 1000).toLocaleDateString(undefined, {
     day: 'numeric',

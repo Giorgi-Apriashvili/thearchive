@@ -902,6 +902,23 @@ messages; the server's clock, not the client's, decides "since". This replaced r
 the whole room every fifth poll to catch tombstones, which would also have thrown away
 whatever had been scrolled back to.
 
+### Reading a conversation
+
+Consecutive messages from one person within five minutes read as one turn — name and
+picture once — and a day boundary draws a divider ("Today", "Yesterday", a weekday, then
+dates). Opening a room returns `last_read_id` as it stood before this visit, and a "New
+messages" line goes after it; it stays put while the room is open, though reading moves
+on. Scrolled away from the bottom, a "↓" button counts what has arrived since.
+
+Messages take light formatting — **bold**, *italic* or _italic_, ~~struck~~, `code`,
+fenced blocks and `>` quotes — and nothing else. `parseBlocks` returns blocks of runs with
+flags, never markup, so the rule that keeps another member's text from reaching the DOM
+as HTML holds: Svelte escapes every character. Inline code is literal; emphasis is found
+in plain runs after links, so URLs with `_` or `*` survive, and underscores count only at
+word edges, so snake_case does not italicise. The emoji picker is a short curated grid of
+the device's own emoji; its button is drawn, since a character would be an empty box on a
+device without an emoji font.
+
 ### Notifications
 
 Pop-ups while the site is open, for an unread mention, an unseen send of links, or an

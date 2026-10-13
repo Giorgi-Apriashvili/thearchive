@@ -163,6 +163,26 @@ const PASS = 'correct-horse-battery'
     await page.keyboard.press('Escape')
   })
 
+  await step('chat: formatting, escaped', async () => {
+    await page.getByPlaceholder('Message CSP test').fill('**bold** and `code` and <b>not html</b>')
+    await page.getByRole('button', { name: 'Send' }).click()
+    await page.locator('span.font-semibold', { hasText: 'bold' }).first().waitFor()
+    await page.locator('code', { hasText: 'code' }).first().waitFor()
+    // Typed markup stays text: no <b> element appears, the characters do.
+    await page.getByText('<b>not html</b>', { exact: false }).first().waitFor()
+    if (await page.locator('.group b').count()) throw new Error('a typed <b> became an element')
+    await page.getByText('Today', { exact: true }).first().waitFor() // the date divider
+  })
+
+  await step('chat: emoji picker', async () => {
+    await page.getByRole('button', { name: 'Emoji' }).click()
+    await page.getByRole('dialog', { name: 'Emoji' }).getByRole('button', { name: '👍' }).click()
+    const value = await page.getByPlaceholder('Message CSP test').inputValue()
+    if (!value.includes('👍')) throw new Error(`emoji not inserted: ${JSON.stringify(value)}`)
+    await page.keyboard.press('Escape')
+    await page.getByPlaceholder('Message CSP test').fill('')
+  })
+
   await step('chat: edit your own message', async () => {
     const message = page.locator('.group', { hasText: 'see https://example.com' }).first()
     await message.hover()
@@ -203,6 +223,9 @@ const PASS = 'correct-horse-battery'
     await page.getByText('message 205', { exact: true }).waitFor()
     await page.getByRole('button', { name: 'Load earlier messages' }).click()
     await page.getByText('message 1', { exact: true }).waitFor()
+    // Scrolled back now: the way down shows, and takes you there.
+    await page.getByRole('button', { name: /^↓/ }).click()
+    await page.getByRole('button', { name: /^↓/ }).waitFor({ state: 'detached' })
   })
 
   await step('chat: leave a room', async () => {

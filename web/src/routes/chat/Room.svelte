@@ -1,8 +1,8 @@
 <script lang="ts">
   import { api, ApiError, type ChatMessage, type ChatRoom, type Me, type ShareSummary } from '../../lib/api'
   import { chat } from '../../lib/chat.svelte'
-  import { chatTime } from '../../lib/format'
-  import { parseMessage } from '../../lib/message'
+  import { chatTime, clockTime, dayKey, dayLabel } from '../../lib/format'
+  import { parseBlocks, type Segment } from '../../lib/message'
   import { link } from '../../lib/router.svelte'
   import Avatar from '../../lib/Avatar.svelte'
   import MemberName from '../../lib/MemberName.svelte'
@@ -12,6 +12,7 @@
   import Confirm from '../../lib/Confirm.svelte'
   import Members from './Members.svelte'
   import RoomSettings from './RoomSettings.svelte'
+  import EmojiPicker from './EmojiPicker.svelte'
   import { router } from '../../lib/router.svelte'
   import { tick } from 'svelte'
 
@@ -131,7 +132,46 @@
   // Only follow new messages when the reader is already at the bottom. Yanking someone
   // out of the history they are reading because a message arrived is the single most
   // annoying thing a chat window can do.
-  let pinned = true
+  let pinned = $state(true)
+  // The newest message seen while at the bottom: anything after it arrived while
+  // scrolled up, and is what the jump button counts.
+  let seenUpTo = $state(0)
+  $effect(() => {
+    const last = chat.messages[chat.messages.length - 1]
+    if (pinned && last) seenUpTo = last.id
+  })
+  const newBelow = $derived(
+    chat.messages.filter((m) => m.id > seenUpTo && m.author !== me.username).length,
+  )
+
+  function jumpToLatest() {
+    if (!scroller) return
+    scroller.scrollTo({ top: scroller.scrollHeight, behavior: 'smooth' })
+    pinned = true
+  }
+
+  function styleOf(segment: Segment): string {
+    return [
+      segment.bold ? 'font-semibold' : '',
+      segment.italic ? 'italic' : '',
+      segment.strike ? 'line-through' : '',
+    ].join(' ')
+  }
+
+  let showEmoji = $state(false)
+
+  // Into the draft at the caret, keeping the composer focused for whatever comes next.
+  function insertEmoji(emoji: string) {
+    const field = composer
+    const at = field?.selectionStart ?? draft.length
+    const end = field?.selectionEnd ?? at
+    draft = `${draft.slice(0, at)}${emoji}${draft.slice(end)}`
+    const caret = at + emoji.length
+    queueMicrotask(() => {
+      field?.focus()
+      field?.setSelectionRange(caret, caret)
+    })
+  }
 
   function onScroll() {
     if (!scroller) return
@@ -251,6 +291,27 @@
   const canInvite = $derived(room.can_manage)
 </script>
 
+<!-- The runs of one formatted block: links, mentions, inline code and styled text. -->
+{#snippet runs(segments: Segment[], message: ChatMessage)}{#each segments as segment}{#if segment.href}<a
+                  href={segment.href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-accent {styleOf(segment)}"
+                  >{segment.text}</a
+                >{:else if segment.mention}<!--
+                  Both halves are needed. `mentions_me` says the message named my
+                  account, which a name comparison cannot know once names can be changed
+                  and reused; the name comparison says *this* @ is the one that meant me,
+                  which a per-message flag cannot say when a message names two people.
+                --><a
+                  href="/u/{encodeURIComponent(segment.mention)}"
+                  onclick={(e) => link(e, `/u/${encodeURIComponent(segment.mention!)}`)}
+                  class="rounded px-0.5 font-medium hover:underline {styleOf(segment)} {message.mentions_me &&
+                  segment.mention === me.username
+                    ? 'bg-accent/20 text-accent'
+                    : 'text-ink-300'}">{segment.text}</a
+                >{:else if segment.code}<code class="rounded bg-ink-800 px-1 py-0.5 font-mono text-[0.85em] text-ink-300">{segment.text}</code>{:else}<span class={styleOf(segment)}>{segment.text}</span>{/if}{/each}{/snippet}
+
 <!-- Fixed height on phones, where the page scrolls; from md, the window's height less the
      header above it, so the conversation uses the screen rather than a box within it. -->
 <div class="flex h-[34rem] flex-col rounded-xl border border-ink-800 md:h-[calc(100dvh-15rem)] md:min-h-[28rem]">
@@ -329,7 +390,8 @@
     <p class="border-b border-ink-800 px-4 py-2 text-xs text-ink-500">{inviteNote}</p>
   {/if}
 
-  <div bind:this={scroller} onscroll={onScroll} class="flex-1 space-y-3 overflow-y-auto px-4 py-3">
+  <div class="relative min-h-0 flex-1">
+  <div bind:this={scroller} onscroll={onScroll} class="h-full overflow-y-auto px-4 py-3">
     {#if chat.hasOlder}
       <div class="text-center">
         <button
@@ -345,97 +407,126 @@
       <p class="text-xs text-ink-500">Nothing here yet.</p>
     {/if}
 
-    {#each chat.messages as message (message.id)}
-      <div class="group flex gap-2.5">
-        <Avatar
-          src={message.author_departed ? undefined : message.author_avatar}
-          name={message.author}
-        />
-        <div class="min-w-0 flex-1">
-        <p class="flex items-baseline gap-2 text-xs">
-          <!-- Role is carried by colour alone. Spelling the tier out beside every name
-               turns a conversation into a staff list. -->
-          <MemberName
-            username={message.author}
-            displayName={message.author_display_name}
-            role={message.author_role}
-            departed={message.author_departed}
+    {#each chat.messages as message, i (message.id)}
+      {@const prev = i > 0 ? chat.messages[i - 1] : null}
+      {@const newDay = !prev || dayKey(prev.created_at) !== dayKey(message.created_at)}
+      {@const firstUnread =
+        chat.lastReadAtOpen > 0 &&
+        message.id > chat.lastReadAtOpen &&
+        (!prev || prev.id <= chat.lastReadAtOpen) &&
+        message.author !== me.username}
+      <!-- Consecutive messages from one person within five minutes read as one turn: the
+           name and picture once, the rest beneath. A day boundary or the unread line
+           starts a new turn regardless. -->
+      {@const continued =
+        !!prev &&
+        !newDay &&
+        !firstUnread &&
+        prev.author === message.author &&
+        !!prev.author_departed === !!message.author_departed &&
+        message.created_at - prev.created_at < 300}
+      {#if newDay}
+        <div class="my-3 flex items-center gap-3 text-[11px] text-ink-500" role="separator">
+          <span class="h-px flex-1 bg-ink-800"></span>
+          <span>{dayLabel(message.created_at)}</span>
+          <span class="h-px flex-1 bg-ink-800"></span>
+        </div>
+      {/if}
+      {#if firstUnread}
+        <div class="my-2 flex items-center gap-3 text-[11px] font-medium text-accent" role="separator">
+          <span class="h-px flex-1 bg-accent/40"></span>
+          <span>New messages</span>
+          <span class="h-px flex-1 bg-accent/40"></span>
+        </div>
+      {/if}
+      <div class="group relative flex gap-2.5 {continued ? 'mt-0.5' : newDay || firstUnread ? '' : 'mt-3'}">
+        {#if continued}
+          <span class="tnum w-7 shrink-0 pt-1 text-right text-[9px] text-ink-700 opacity-0 group-hover:opacity-100">
+            {clockTime(message.created_at)}
+          </span>
+        {:else}
+          <Avatar
+            src={message.author_departed ? undefined : message.author_avatar}
+            name={message.author}
           />
-          {#if message.author_departed}
-            <span class="text-[10px] uppercase text-ink-700" title="This account has been deleted">
-              former member
-            </span>
-          {/if}
-          <span class="tnum text-[10px] text-ink-700">{chatTime(message.created_at)}</span>
-          {#if message.edited_at && !message.deleted}
-            <span class="text-[10px] text-ink-700" title="Edited {chatTime(message.edited_at)}">(edited)</span>
-          {/if}
-          {#if !message.deleted && editingId !== message.id}
-            <!-- Shown on hover where there is hover; always on touch screens, which have none. -->
-            <span class="ml-auto flex gap-2 opacity-0 transition group-hover:opacity-100 [@media(hover:none)]:opacity-100">
-              {#if message.author === me.username && !message.author_departed}
-                <button class="text-[10px] text-ink-700 hover:text-ink-300" onclick={() => startEdit(message)}>Edit</button>
-              {/if}
-              {#if message.author === me.username || me.role === 'admin'}
-                <button class="text-[10px] text-ink-700 hover:text-red-400" onclick={() => (removing = message)}>Remove</button>
-              {/if}
-            </span>
-          {/if}
-        </p>
+        {/if}
+        <div class="min-w-0 flex-1">
+        {#if !continued}
+          <p class="flex items-baseline gap-2 pr-24 text-xs">
+            <!-- Role is carried by colour alone. Spelling the tier out beside every name
+                 turns a conversation into a staff list. -->
+            <MemberName
+              username={message.author}
+              displayName={message.author_display_name}
+              role={message.author_role}
+              departed={message.author_departed}
+            />
+            {#if message.author_departed}
+              <span class="text-[10px] uppercase text-ink-700" title="This account has been deleted">
+                former member
+              </span>
+            {/if}
+            <span class="tnum text-[10px] text-ink-700">{clockTime(message.created_at)}</span>
+          </p>
+        {/if}
+        {#if !message.deleted && editingId !== message.id}
+          <!-- Shown on hover where there is hover; always on touch screens, which have none. -->
+          <span class="absolute right-0 top-0 flex gap-2 rounded bg-ink-950/80 px-1 opacity-0 transition group-hover:opacity-100 [@media(hover:none)]:opacity-100">
+            {#if message.author === me.username && !message.author_departed}
+              <button class="text-[10px] text-ink-500 hover:text-ink-300" onclick={() => startEdit(message)}>Edit</button>
+            {/if}
+            {#if message.author === me.username || me.role === 'admin'}
+              <button class="text-[10px] text-ink-500 hover:text-red-400" onclick={() => (removing = message)}>Remove</button>
+            {/if}
+          </span>
+        {/if}
         {#if message.deleted}
           <!-- A tombstone, not a gap: quietly reflowing a conversation around what was
                taken out is its own kind of dishonesty. -->
           <p class="mt-0.5 text-sm italic text-ink-700">Removed by {message.deleted_by}</p>
+        {:else if editingId === message.id}
+          <div class="mt-1 max-w-[70ch]">
+            <!-- svelte-ignore a11y_autofocus -->
+            <textarea
+              bind:value={editText}
+              onkeydown={onEditKeydown}
+              autofocus
+              rows="2"
+              maxlength="4000"
+              class="w-full resize-y rounded-lg border border-accent/60 bg-ink-900 px-3 py-2 text-sm outline-none"
+            ></textarea>
+            <p class="mt-1 flex items-center gap-3 text-[11px] text-ink-500">
+              <button class="text-accent hover:text-accent-dim disabled:opacity-40" disabled={savingEdit} onclick={saveEdit}>
+                {savingEdit ? 'Saving…' : 'Save'}
+              </button>
+              <button class="hover:text-ink-300" onclick={() => (editingId = null)}>Cancel</button>
+              <span>Enter to save · Esc to cancel</span>
+            </p>
+          </div>
         {:else}
-          <!-- Rendered as segments, never {@html}. linkify() returns data precisely so
-               that Svelte keeps escaping both the text and the href — this is the one
+          <!-- Rendered as blocks and runs, never {@html}: parseBlocks returns data precisely
+               so that Svelte keeps escaping both the text and the href — this is the one
                place in the app where another person's arbitrary text reaches the DOM. -->
-          {#if editingId === message.id}
-            <div class="mt-1 max-w-[70ch]">
-              <!-- svelte-ignore a11y_autofocus -->
-              <textarea
-                bind:value={editText}
-                onkeydown={onEditKeydown}
-                autofocus
-                rows="2"
-                maxlength="4000"
-                class="w-full resize-y rounded-lg border border-accent/60 bg-ink-900 px-3 py-2 text-sm outline-none"
-              ></textarea>
-              <p class="mt-1 flex items-center gap-3 text-[11px] text-ink-500">
-                <button class="text-accent hover:text-accent-dim disabled:opacity-40" disabled={savingEdit} onclick={saveEdit}>
-                  {savingEdit ? 'Saving…' : 'Save'}
-                </button>
-                <button class="hover:text-ink-300" onclick={() => (editingId = null)}>Cancel</button>
-                <span>Enter to save · Esc to cancel</span>
-              </p>
+          {#if message.body}
+            <!-- 70ch: past that, lines get hard to follow, however wide the window. -->
+            <div class="mt-0.5 max-w-[70ch] space-y-1 text-sm text-ink-100 [overflow-wrap:anywhere]">
+              {#each parseBlocks(message.body, message.mentions ?? []) as block, b (b)}
+                {#if block.kind === 'code'}
+                  <pre class="overflow-x-auto rounded-lg border border-ink-800 bg-ink-900 px-3 py-2 font-mono text-xs text-ink-300">{block.text}</pre>
+                {:else if block.kind === 'quote'}
+                  <blockquote class="whitespace-pre-wrap border-l-2 border-ink-700 pl-3 text-ink-300">{@render runs(block.segments, message)}</blockquote>
+                {:else}
+                  <p class="whitespace-pre-wrap">{@render runs(block.segments, message)}</p>
+                {/if}
+              {/each}
             </div>
-          {:else if message.body}
-          <!-- 70ch: past that, lines get hard to follow, however wide the window. -->
-          <p class="mt-0.5 max-w-[70ch] whitespace-pre-wrap text-sm text-ink-100 [overflow-wrap:anywhere]">
-            {#each parseMessage(message.body ?? '', message.mentions ?? []) as segment}{#if segment.href}<a
-                  href={segment.href}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  class="text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-accent"
-                  >{segment.text}</a
-                >{:else if segment.mention}<!--
-                  Both halves are needed. `mentions_me` says the message named my
-                  account, which a name comparison cannot know once names can be changed
-                  and reused; the name comparison says *this* @ is the one that meant me,
-                  which a per-message flag cannot say when a message names two people.
-                --><a
-                  href="/u/{encodeURIComponent(segment.mention)}"
-                  onclick={(e) => link(e, `/u/${encodeURIComponent(segment.mention!)}`)}
-                  class="rounded px-0.5 font-medium hover:underline {message.mentions_me &&
-                  segment.mention === me.username
-                    ? 'bg-accent/20 text-accent'
-                    : 'text-ink-300'}">{segment.text}</a
-                >{:else}{segment.text}{/if}{/each}
-          </p>
+          {/if}
+          {#if message.edited_at}
+            <span class="text-[10px] text-ink-700" title="Edited {chatTime(message.edited_at)}">(edited)</span>
           {/if}
           {#if message.shares?.length}
             <div class="mt-1.5 flex flex-col gap-1.5">
-              {#each message.shares as card, i (i)}
+              {#each message.shares as card, c (c)}
                 <ShareCard {card} />
               {/each}
             </div>
@@ -444,6 +535,16 @@
         </div>
       </div>
     {/each}
+  </div>
+  {#if !pinned && chat.messages.length}
+    <!-- Scrolled back: a way down again, saying whether anything arrived meanwhile. -->
+    <button
+      onclick={jumpToLatest}
+      class="absolute bottom-3 right-4 rounded-full border border-ink-700 bg-ink-900 px-3 py-1.5 text-xs shadow-lg transition hover:border-ink-500 {newBelow
+        ? 'text-accent'
+        : 'text-ink-300'}"
+    >↓ {newBelow ? `${newBelow} new` : 'Latest'}</button>
+  {/if}
   </div>
 
   {#if chat.messagesError}
@@ -493,6 +594,28 @@
         {/each}
       </ul>
     {/if}
+    <div class="relative shrink-0">
+      <button
+        type="button"
+        onclick={() => (showEmoji = !showEmoji)}
+        title="Emoji"
+        aria-label="Emoji"
+        aria-expanded={showEmoji}
+        class="rounded-lg border border-ink-700 px-2.5 py-2 text-ink-300 transition hover:border-ink-500"
+      >
+        <!-- Drawn, not ☺: a character depends on the device having a font for it, and
+             without one this button would be an empty box. -->
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true" class="block">
+          <circle cx="8" cy="8" r="6.3" />
+          <path d="M5.4 9.6c.7 1 1.6 1.5 2.6 1.5s1.9-.5 2.6-1.5" stroke-linecap="round" />
+          <circle cx="6" cy="6.6" r=".6" fill="currentColor" stroke="none" />
+          <circle cx="10" cy="6.6" r=".6" fill="currentColor" stroke="none" />
+        </svg>
+      </button>
+      {#if showEmoji}
+        <EmojiPicker onPick={insertEmoji} onClose={() => (showEmoji = false)} />
+      {/if}
+    </div>
     <button
       type="button"
       onclick={() => (picking = true)}

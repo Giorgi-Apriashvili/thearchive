@@ -314,6 +314,10 @@ check "alice, who wrote them, has none" \
 LAST=$(as "$BOB" GET "/api/chat/rooms/$ROOM/messages" \
        | py "import sys,json;print(json.load(sys.stdin)['messages'][-1]['id'])")
 as "$BOB" POST "/api/chat/rooms/$ROOM/read" "{\"last_id\":$LAST}" >/dev/null
+check "opening a room says where you had read up to" \
+    "$(as "$BOB" GET "/api/chat/rooms/$ROOM/messages" | py "import sys,json;print(json.load(sys.stdin)['last_read_id'] == $LAST)")" "True"
+check "but a poll for more does not" \
+    "$(as "$BOB" GET "/api/chat/rooms/$ROOM/messages?since=$LAST" | py "import sys,json;print('last_read_id' in json.load(sys.stdin))")" "False"
 check "reading clears them" \
     "$(as "$BOB" GET /api/chat/rooms | room Saturday | rf mentions_unread)" "0"
 

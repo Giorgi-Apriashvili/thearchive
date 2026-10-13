@@ -810,6 +810,16 @@ void registerChatRoutes(Database& db, Auth& auth) {
                 if (changed > 0) {
                     out["changed"] = collect("m.updated_at >= ?2", changed, kMaxChangedPerFetch);
                 }
+                // Where this reader had read up to, on opening the room: the "New messages"
+                // line goes after it. Read before this request marks anything read.
+                if (since == 0 && before == 0) {
+                    auto read = db.prepare(
+                        "SELECT last_read_id FROM room_members WHERE room_id = ? AND user_id = ?");
+                    read.bind(1, roomId).bind(2, user.id);
+                    if (read.step()) {
+                        out["last_read_id"] = static_cast<Json::Int64>(read.columnInt(0));
+                    }
+                }
                 out["now"] = static_cast<Json::Int64>(now);
                 auto resp = drogon::HttpResponse::newHttpJsonResponse(out);
                 resp->addHeader("Cache-Control", "no-store");

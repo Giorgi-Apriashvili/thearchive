@@ -29,6 +29,9 @@ class ChatStore {
   /** Whether there is history before the oldest message held — scrolling back loads it. */
   hasOlder = $state(false)
   loadingOlder = $state(false)
+  /** Where I had read up to when the room was opened: the "New messages" line goes after
+   *  it, and stays put while the room is open even though reading moves on. */
+  lastReadAtOpen = $state(0)
   loadingMessages = $state(false)
   messagesError = $state('')
   /** Who is in the open room. Feeds the header's member list and the composer's @
@@ -168,6 +171,7 @@ class ChatStore {
         messages: ChatMessage[]
         changed?: ChatMessage[]
         has_older?: boolean
+        last_read_id?: number
         now: number
       }>(`/api/chat/rooms/${room}/messages?since=${this.#cursor}${changed}`)
       // The room may have been switched while this was in flight; appending then would
@@ -177,6 +181,7 @@ class ChatStore {
       if (this.#cursor === 0) {
         this.messages = data.messages
         this.hasOlder = data.has_older ?? false
+        this.lastReadAtOpen = data.last_read_id ?? 0
       } else {
         // Deduplicated rather than trusting the cursor: two polls can overlap around a
         // send, and a doubled message is worse than a wasted comparison.
