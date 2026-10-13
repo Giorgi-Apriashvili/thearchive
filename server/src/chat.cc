@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include "activity.h"
 #include "httputil.h"
 #include "shares.h"
 
@@ -712,6 +713,18 @@ void registerChatRoutes(Database& db, Auth& auth) {
                 auto links = db.prepare("DELETE FROM message_shares WHERE message_id = ?");
                 links.bind(1, messageId).run();
                 tx.commit();
+                {
+                    // Which room and whose message — never what it said, which is now gone.
+                    auto where = db.prepare(
+                        "SELECT r.name, m.author_name FROM messages m "
+                        "JOIN rooms r ON r.id = m.room_id WHERE m.id = ?");
+                    where.bind(1, messageId);
+                    if (where.step()) {
+                        activity::record(req, user, "admin.message_removed",
+                                         "in “" + where.columnText(0) + "”, by " +
+                                             where.columnText(1));
+                    }
+                }
                 Json::Value out;
                 out["deleted"] = true;
                 return drogon::HttpResponse::newHttpJsonResponse(out);

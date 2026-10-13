@@ -6,6 +6,7 @@
   import Invites from './Invites.svelte'
   import Shares from './Shares.svelte'
   import Overview from './Overview.svelte'
+  import Activity from './Activity.svelte'
 
   let { me }: { me: Me } = $props()
 
@@ -18,6 +19,7 @@
     { id: 'users', label: 'Users', href: '/admin/users' },
     { id: 'invites', label: 'Invites', href: '/admin/invites' },
     { id: 'shares', label: 'Shares', href: '/admin/shares' },
+    { id: 'activity', label: 'Activity', href: '/admin/activity' },
   ]
 </script>
 
@@ -61,6 +63,8 @@
         <Invites />
       {:else if section === 'shares'}
         <Shares />
+      {:else if section === 'activity'}
+        <Activity />
       {:else}
         <Overview />
       {/if}

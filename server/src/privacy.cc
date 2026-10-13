@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <string>
 
+#include "activity.h"
 #include "auth.h"
 #include "gc.h"
 #include "httputil.h"
@@ -88,6 +89,9 @@ void registerPrivacyRoutes() {
                 retention["unshared_upload_hours"] =
                     static_cast<Json::Int64>((unshared + 3599) / 3600);
                 retention["backup_days"] = backupDays();
+                // The activity log is pruned to this; Caddy's access log is rolled to the
+                // same period (see the Caddyfile).
+                retention["access_days"] = activity::kDays;
                 // Set by compose from ARCHIVE_OFFSITE_TARGET: the app learns that copies
                 // leave the machine, never where to.
                 const bool offsite = !env("ARCHIVE_OFFSITE_BACKUPS").empty();

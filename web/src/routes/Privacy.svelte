@@ -132,8 +132,18 @@
             when it is created, and its address and size when it is downloaded as a ZIP; the
             size and a fingerprint of the contents of each finished upload, but not its name;
             and, if a page ever breaks the
-            site's content security policy, that page's address. <em>Ordinary visits are not
-            logged</em> — there are no access logs.
+            site's content security policy, that page's address.
+          </li>
+          <li>
+            <strong>Access records.</strong> The web server writes a line for each request: the
+            time, your network address shortened to its network (the last part dropped), what
+            was asked for — with link addresses removed — the result, and the identification
+            string your browser sends. The checks an open page makes every few seconds in the
+            background are not recorded. Separately, the site records sign-ins (failed ones too,
+            naming the account only if it exists), links being opened and downloaded, uploads,
+            and changes to links, accounts and invitations — each with your account if you are
+            signed in, the shortened address and the browser string. Never the text of a
+            message, a password, or a link's address.
           </li>
         </ul>
       </section>
@@ -165,8 +175,7 @@
           <li>
             <strong>Who downloaded a link:</strong> when you download from a link while signed
             in, the member who made it can see that you did, which files, and when. Nobody else
-            can. If you are not signed in, a download is only counted, never identified — no
-            address or other detail about you is kept.
+            can. If you are not signed in, they see only that it was downloaded, not by whom.
           </li>
           <li>
             <strong>Chat:</strong> every member can see the names of all rooms; what is said in a
@@ -174,12 +183,12 @@
           </li>
           <li>
             <strong>Administrators</strong> can see the list of accounts and every link and file,
-            and can remove chat messages. They can add themselves to any room, which then shows
+            the site's access record described above, and can remove chat messages. They can add themselves to any room, which then shows
             in its member count like anyone else's joining.
           </li>
           <li>
             <strong>The operator</strong> has access to the server itself, and so to everything
-            on it, including members-only files. Passwords remain the exception: they cannot
+            on it, including members-only files and the web server's access record. Passwords remain the exception: they cannot
             be read back from how they are stored.
           </li>
         </ul>
@@ -239,6 +248,10 @@
             So something deleted from the site can survive in a backup for up to
             {period(r.backup_days + (r.backup_offsite ? r.backup_offsite_extra_days : 0))}{#if r.backup_offsite && r.backup_offsite_extra_days > 0},
               though after the first {days(r.backup_days)} only in encrypted form{/if}.
+          </li>
+          <li>
+            <strong>Access records</strong>, the web server's and the site's, are kept for
+            {days(r.access_days)} and then deleted.
           </li>
           <li>
             <strong>Logs</strong> are rotated, oldest first, once they reach a fixed size, and are

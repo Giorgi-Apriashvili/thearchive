@@ -372,6 +372,7 @@ check "sweep interval from the setting in force" "$(priv "d['retention']['sweep_
 check "unshared uploads: the later of expiry and grace, plus a sweep" \
     "$(priv "d['retention']['unshared_upload_hours']")" "25"
 check "backup retention defaults to what backup.sh applies" "$(priv "d['retention']['backup_days']")" "14"
+check "access records are stated at the period they are pruned to" "$(priv "d['retention']['access_days']")" "90"
 check "off-site copies are stated when configured" "$(priv "d['retention']['backup_offsite']")" "True"
 check "with how long their snapshots can keep them" "$(priv "d['retention']['backup_offsite_extra_days']")" "930"
 # The session cookie really is the only cookie the notice can claim.

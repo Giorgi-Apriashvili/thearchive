@@ -6,6 +6,7 @@
 #include <system_error>
 #include <vector>
 
+#include "activity.h"
 #include "httputil.h"
 #include "shares.h"
 #include "storage.h"
@@ -65,6 +66,27 @@ constexpr const char* kUserSelect =
     "LEFT JOIN invites i ON i.used_by = u.id "
     "LEFT JOIN users inv ON inv.id = i.created_by ";
 
+// Labels for the activity log: who or what an action was about, by name rather than id,
+// and never by a link's token — a token in a log would be a way into the link.
+std::string userLabel(Database& db, std::int64_t id) {
+    auto stmt = db.prepare("SELECT username FROM users WHERE id = ?");
+    stmt.bind(1, id);
+    return stmt.step() ? stmt.columnText(0) : "account #" + std::to_string(id);
+}
+
+std::string shareLabel(Database& db, const std::string& token) {
+    auto stmt = db.prepare(
+        "SELECT COALESCE(s.title, ''), COALESCE(u.username, '') "
+        "FROM shares s LEFT JOIN users u ON u.id = s.owner_id WHERE s.token = ?");
+    stmt.bind(1, token);
+    if (!stmt.step()) {
+        return "a link";
+    }
+    const std::string title = stmt.columnText(0);
+    return "“" + (title.empty() ? std::string{"Untitled"} : title) + "” by " +
+           stmt.columnText(1);
+}
+
 }  // namespace
 
 void registerAdminRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
@@ -103,6 +125,7 @@ void registerAdminRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
                         throw HttpError{409, "you cannot delete your own account"};
                     }
                     requireAnotherAdminRemains(db, userId);
+                    const std::string target = userLabel(db, userId);
                     // Shares and sessions cascade. Their blobs drop to refcount zero and
                     // leave on the normal sweep, so nothing is unlinked inline here.
                     auto del = db.prepare("DELETE FROM users WHERE id = ?");
@@ -111,6 +134,7 @@ void registerAdminRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
                         throw HttpError{404, "no such user"};
                     }
                     LOG_WARN << "admin " << actor.username << " deleted user " << userId;
+                    activity::record(req, actor, "admin.user_deleted", target);
                     Json::Value out;
                     out["deleted"] = true;
                     return drogon::HttpResponse::newHttpJsonResponse(out);
@@ -196,6 +220,7 @@ void registerAdminRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
                 }
                 LOG_INFO << "admin " << actor.username << " set user " << userId
                          << " to " << role;
+                activity::record(req, actor, "admin.role", userLabel(db, userId) + ": " + role);
                 Json::Value out;
                 out["role"] = role;
                 return drogon::HttpResponse::newHttpJsonResponse(out);
@@ -235,6 +260,8 @@ void registerAdminRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
                         kill.bind(1, userId).run();
                     }
                     tx.commit();
+                    activity::record(req, actor, disabling ? "admin.disabled" : "admin.enabled",
+                                     userLabel(db, userId));
 
                     Json::Value out;
                     out["disabled"] = disabling;
@@ -250,7 +277,7 @@ void registerAdminRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
                      std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                      const std::string& id) {
             callback(guarded([&] {
-                requireAdmin(req, auth);
+                const User actor = requireAdmin(req, auth);
                 // Only the links die. Files stay, attribution stays, and the blobs go
                 // out on the normal sweep once nothing references them.
                 auto stmt = db.prepare(
@@ -259,6 +286,9 @@ void registerAdminRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
                 stmt.bind(1, nowSeconds()).bind(2, parseId(id)).run();
                 Json::Value out;
                 out["revoked"] = static_cast<Json::Int64>(db.changes());
+                activity::record(req, actor, "admin.links_revoked",
+                                 userLabel(db, parseId(id)) + ": " +
+                                     std::to_string(out["revoked"].asInt64()) + " link(s)");
                 return drogon::HttpResponse::newHttpJsonResponse(out);
             }));
         },
@@ -266,7 +296,7 @@ void registerAdminRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
 
     app.registerHandler(
         "/api/admin/users/{id}/username",
-        [&auth](const drogon::HttpRequestPtr& req,
+        [&db, &auth](const drogon::HttpRequestPtr& req,
                 std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                 const std::string& id) {
             callback(guarded([&] {
@@ -277,9 +307,11 @@ void registerAdminRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
                 // No guard on renaming yourself, or an admin, or the last admin: a name
                 // change removes no privilege and ends no session, so none of the
                 // reasons the other handlers here have for refusing apply.
+                const std::string before = userLabel(db, userId);
                 const std::string now = auth.renameUser(userId, was);
                 LOG_WARN << "admin " << actor.username << " renamed user " << userId
                          << " to " << now;
+                activity::record(req, actor, "admin.renamed", before + " → " + now);
                 Json::Value out;
                 out["username"] = now;
                 return drogon::HttpResponse::newHttpJsonResponse(out);
@@ -289,7 +321,7 @@ void registerAdminRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
 
     app.registerHandler(
         "/api/admin/users/{id}/password",
-        [&auth](const drogon::HttpRequestPtr& req,
+        [&db, &auth](const drogon::HttpRequestPtr& req,
                 std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                 const std::string& id) {
             callback(guarded([&] {
@@ -306,6 +338,7 @@ void registerAdminRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
                 const std::string password = auth.resetPassword(userId);
                 LOG_WARN << "admin " << actor.username << " reset the password of user "
                          << userId;
+                activity::record(req, actor, "admin.password_reset", userLabel(db, userId));
                 Json::Value out;
                 out["password"] = password;
                 return drogon::HttpResponse::newHttpJsonResponse(out);
@@ -358,7 +391,7 @@ void registerAdminRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
                      std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                      const std::string& code) {
             callback(guarded([&] {
-                requireAdmin(req, auth);
+                const User actor = requireAdmin(req, auth);
                 // Only unredeemed codes. Deleting a used one would erase the record of
                 // who vouched for an existing member.
                 auto stmt = db.prepare(
@@ -367,6 +400,7 @@ void registerAdminRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
                 if (db.changes() == 0) {
                     throw HttpError{404, "no open invite with that code"};
                 }
+                activity::record(req, actor, "invite.revoked");
                 Json::Value out;
                 out["revoked"] = true;
                 return drogon::HttpResponse::newHttpJsonResponse(out);
@@ -418,7 +452,8 @@ void registerAdminRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
                      std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                      const std::string& token) {
             callback(guarded([&]() -> drogon::HttpResponsePtr {
-                requireAdmin(req, auth);
+                const User actor = requireAdmin(req, auth);
+                const std::string label = shareLabel(db, token);
 
                 if (req->method() == drogon::Patch) {
                     std::shared_ptr<Json::Value> holder;
@@ -434,6 +469,7 @@ void registerAdminRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
                     if (db.changes() == 0) {
                         throw HttpError{404, "no such share"};
                     }
+                    activity::record(req, actor, "admin.link_changed", label + ": " + wanted);
                     Json::Value out;
                     out["visibility"] = wanted;
                     return drogon::HttpResponse::newHttpJsonResponse(out);
@@ -445,6 +481,7 @@ void registerAdminRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
                 if (db.changes() == 0) {
                     throw HttpError{404, "no such share"};
                 }
+                activity::record(req, actor, "admin.link_removed", label);
                 Json::Value out;
                 out["revoked"] = true;
                 return drogon::HttpResponse::newHttpJsonResponse(out);

@@ -357,7 +357,26 @@ CREATE TABLE share_downloads (
 CREATE INDEX idx_share_downloads_share ON share_downloads(share_id, user_id);
 )SQL";
 
-constexpr std::array<Migration, 16> kMigrations{{
+// The activity log (activity.h): meaningful events, who if signed in, from which network
+// (shortened), the browser's identification string. `actor` is the username at the time,
+// shown when the account is gone; a live account is shown by its current name. Pruned to
+// activity::kDays by the sweep.
+constexpr const char* kSchemaV17 = R"SQL(
+CREATE TABLE activity (
+    id          INTEGER PRIMARY KEY,
+    at          INTEGER NOT NULL,
+    user_id     INTEGER          REFERENCES users(id) ON DELETE SET NULL,
+    actor       TEXT    NOT NULL DEFAULT '',
+    network     TEXT,
+    user_agent  TEXT,
+    event       TEXT    NOT NULL,
+    detail      TEXT    NOT NULL DEFAULT ''
+);
+CREATE INDEX idx_activity_at ON activity(at);
+CREATE INDEX idx_activity_user ON activity(user_id, id);
+)SQL";
+
+constexpr std::array<Migration, 17> kMigrations{{
     {1, kSchemaV1},
     {2, kSchemaV2},
     {3, kSchemaV3},
@@ -374,6 +393,7 @@ constexpr std::array<Migration, 16> kMigrations{{
     {14, kSchemaV14},
     {15, kSchemaV15},
     {16, kSchemaV16},
+    {17, kSchemaV17},
 }};
 
 }  // namespace

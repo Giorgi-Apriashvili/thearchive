@@ -28,6 +28,11 @@ namespace archive {
 // per-address limit on anything narrower is a limit on nothing.
 std::optional<std::string> clientAddress(const drogon::HttpRequestPtr& req);
 
+// The same client, shortened to its network — "203.0.113.0/24", "2001:db8:1::/48" — for
+// records kept about people rather than for limiting them: enough to tell one network
+// from another, not to name a connection. Empty in the same cases as clientAddress.
+std::optional<std::string> clientNetwork(const drogon::HttpRequestPtr& req);
+
 // Limits password guessing: login, change-password and share passwords.
 //
 // Two layers, because they stop different attackers:

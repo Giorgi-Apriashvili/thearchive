@@ -13,6 +13,7 @@
 #include <sstream>
 #include <string>
 
+#include "activity.h"
 #include "crypto.h"
 #include "httputil.h"
 #include "mimetype.h"
@@ -491,6 +492,10 @@ void registerUploadRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
                         promoteToBlob(db, dataDir, id, upload.totalSize, user.id);
                     LOG_INFO << "upload " << id << " complete: " << hash << " ("
                              << upload.totalSize << " bytes)";
+                    activity::record(req, user, "upload.completed",
+                                     (upload.filename.empty() ? std::string{"download"}
+                                                              : upload.filename) +
+                                         " · " + std::to_string(upload.totalSize) + " bytes");
                     resp->addHeader("X-Archive-Blob", hash);
                 }
                 return resp;

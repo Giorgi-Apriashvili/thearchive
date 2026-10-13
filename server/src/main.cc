@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <string>
 
+#include "activity.h"
 #include "admin.h"
 #include "auth.h"
 #include "chat.h"
@@ -74,6 +75,8 @@ int main(int, char** argv) {
         archive::registerContentSecurityPolicy();
         archive::registerPrivacyRoutes();
         archive::registerProfileRoutes(db, auth, dataDir);
+        archive::activity::init(db);
+        archive::activity::registerActivityRoutes(db, auth);
         archive::registerInboxRoutes(db, auth);
         archive::registerNotificationRoutes(db, auth);
         archive::scheduleGarbageCollection(db, dataDir);

@@ -486,6 +486,35 @@ step deliberately never fails `backup.sh`, so before this its errors reached onl
 journal. Neither service sees member data: one gets `/healthz`, the other the backup's
 name, the off-site result and disk use.
 
+### Access records
+
+Two, because they answer different questions and only one of them can name an account.
+
+**Caddy's access log** is every request, as the server saw it: time, network, method, path,
+status, size, duration, browser. It is for troubleshooting and abuse, read on the server.
+Before anything is written, the line is made safe to keep: link tokens are rewritten out
+of the path (`/d/LINK/…`) — a log of them would be a way into every link — cookies, share
+passwords and referrers are dropped, and addresses are cut to their network (/24 for IPv4,
+/48 for IPv6). The background polling and the uptime check are skipped (`log_skip`); they
+would otherwise be almost every line. Files roll daily and are deleted 89 days after
+closing, so no line outlives 90 days. They are written to `ARCHIVE_LOG_DIR` on the host,
+mode 0644 inside a directory that is the deploying user's alone.
+
+**The activity log** (`activity.h`, Control panel → Activity) is meaningful events with the
+account attached: sign-ins, failed ones and refusals; links opened by anyone but their
+owner, downloaded, given a wrong password, created, changed and removed; uploads finished;
+invitations; and every administrator action, including removing a chat message. Each row
+has the network (`clientNetwork`, the same shortening), the browser string cut to 200
+characters, and a human-readable detail naming the target by title or username — never a
+link token, a password or message text. A failed sign-in names the account only if it
+exists: what people type into a username box is sometimes their password. Rows show the
+member's current name, falling back to the name at the time once the account is gone. The
+sweep prunes anything older than `activity::kDays` (90), which `/api/privacy` reports, so
+the notice states the period that is enforced. Recording never fails a request.
+
+IPv6 visitors still reach the app through Docker's IPv6-less edge network, so the app sees
+no public address for them and records none; Caddy's line has the gateway's.
+
 ## HTTP surface
 
 | | | |
@@ -997,9 +1026,6 @@ the part to have someone qualified read.
 ## Deliberately deferred
 
 - **Per-user quota.** `users.quota_bytes` exists and nothing enforces it.
-- **Access logs.** None are kept. Turning on Caddy's `log` directive is one line, but it
-  is a decision rather than a default: it means retaining every visitor's address, and
-  choosing where the file lives, how it rotates and how long it is kept.
 - **A general request-rate limit.** Password checks are limited; nothing else is. The
   real exposure is bandwidth rather than guessing: anyone holding a public link can
   download it, or its streamed ZIP, as often as they like.

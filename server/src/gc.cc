@@ -7,6 +7,7 @@
 #include <system_error>
 #include <vector>
 
+#include "activity.h"
 #include "httputil.h"
 #include "profiles.h"
 #include "storage.h"
@@ -239,6 +240,8 @@ GcStats runGarbageCollection(Database& db, const fs::path& dataDir) {
     stats.sessionsPurged = purgeExpiredSessions(db, now);
     stats.thumbnailsRendered = renderMissingThumbnails(db, dataDir);
     stats.avatarsRemoved = removeStaleAvatars(db, dataDir);
+    // The activity log keeps the period the privacy notice states, and no longer.
+    stats.activityPruned = activity::prune(db, now);
     return stats;
 }
 
@@ -255,7 +258,7 @@ void scheduleGarbageCollection(Database& db, const fs::path& dataDir) {
                 const GcStats stats = runGarbageCollection(db, dataDir);
                 if (stats.sharesReleased || stats.uploadsExpired || stats.blobsDeleted ||
                     stats.strayFilesRemoved || stats.sessionsPurged ||
-                    stats.thumbnailsRendered) {
+                    stats.thumbnailsRendered || stats.activityPruned) {
                     LOG_INFO << "gc: " << stats.sharesReleased << " share(s) released, "
                              << stats.uploadsExpired << " upload(s) expired, "
                              << stats.blobsDeleted << " blob(s) deleted ("
@@ -263,7 +266,8 @@ void scheduleGarbageCollection(Database& db, const fs::path& dataDir) {
                              << stats.strayFilesRemoved << " stray file(s), "
                              << stats.sessionsPurged << " session(s) purged, "
                              << stats.thumbnailsRendered << " thumbnail(s) rendered, "
-                             << stats.avatarsRemoved << " stale picture(s) removed";
+                             << stats.avatarsRemoved << " stale picture(s) removed, "
+                             << stats.activityPruned << " activity record(s) pruned";
                 }
             } catch (const std::exception& e) {
                 // A failed sweep must not take the server down; the next one retries.

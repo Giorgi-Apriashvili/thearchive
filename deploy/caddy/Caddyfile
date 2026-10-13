@@ -34,6 +34,40 @@
 		-Expires
 	}
 
+	# The server's access log: one line per request, minus what would make it either
+	# dangerous to keep or useless to read.
+	#  - Link tokens are rewritten out of the path. A link's address is its key; a log
+	#    holding them would open every link to whoever reads it.
+	#  - Cookies, share passwords (X-Share-Password) and referrers are dropped.
+	#  - Addresses are shortened to their network: /24 for IPv4, /48 for IPv6.
+	#  - Background polling and the uptime check are not logged: they are most of the
+	#    traffic and say nothing anyone needs to look up.
+	# Rolled daily, and a rolled file is deleted 89 days after it was closed, so no line
+	# is ever older than the 90 days the privacy notice states (kActivityDays in the
+	# app, which states it, is the same 90).
+	@background {
+		method GET
+		path /healthz /api/notifications /api/inbox/unread /api/chat/rooms /api/chat/rooms/*/messages
+	}
+	log_skip @background
+	log {
+		# Readable by the deploying user on the host (Caddy writes as root); the directory
+		# it is in, beside the data and backups, is that user's alone.
+		output file /var/log/caddy/access.log {
+			mode 0644
+			roll_interval 24h
+			roll_keep_for 89d
+		}
+		format filter {
+			request>remote_ip ip_mask 24 48
+			request>client_ip ip_mask 24 48
+			request>headers>Cookie delete
+			request>headers>X-Share-Password delete
+			request>headers>Referer delete
+			request>uri regexp "^/(d|api/shares)/[A-Za-z0-9_-]{16,}" "/${1}/LINK"
+		}
+	}
+
 	reverse_proxy app:8080 {
 		# Stream rather than buffer. Uploads arrive as multi-megabyte tus chunks and
 		# downloads can be gigabytes; buffering either would put them through memory

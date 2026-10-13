@@ -66,6 +66,9 @@ services:
       - ./caddy:/etc/caddy:ro
       - caddy_data:/data      # certificates and ACME account keys — losing this means re-issuing
       - caddy_config:/config
+      # The access log (see the Caddyfile), on the host so it can be read without
+      # entering the container. ARCHIVE_LOG_DIR in .env; ./logs beside this file if unset.
+      - ${ARCHIVE_LOG_DIR:-./logs}:/var/log/caddy
     depends_on: [app]
     networks: [edge]
     logging: *logging

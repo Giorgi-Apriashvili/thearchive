@@ -323,6 +323,15 @@ const PASS = 'correct-horse-battery'
     await page.getByText('Users').first().waitFor()
   })
 
+  await step('control panel: activity', async () => {
+    await page.goto('/admin/activity')
+    await page.getByText('Signed in', { exact: true }).first().waitFor()
+    await page.locator('select').selectOption('link')
+    await page.getByText('Made a link', { exact: true }).first().waitFor()
+    const shown = await page.locator('main li span:first-child').allInnerTexts()
+    if (shown.some((t) => t === 'Signed in')) throw new Error('the Links filter still shows sign-ins')
+  })
+
   await step('control panel: a user', async () => {
     await page.goto('/admin/users/1')
     await page.getByText('Reset password').first().waitFor()
@@ -439,7 +448,8 @@ const PASS = 'correct-horse-battery'
     const { id, half } = await halfUpload()
     await page.goto('/')
     await page.getByText(/stopped part-way/).waitFor()
-    await page.getByText(/· 50% of/).waitFor()
+    // Half, rounded down: 49% when the generated image has an odd size.
+    await page.getByText(/· (49|50)% of/).waitFor()
     const offsets = []
     page.on('request', (r) => {
       if (r.method() === 'PATCH' && r.url().endsWith(id)) offsets.push(Number(r.headers()['upload-offset']))

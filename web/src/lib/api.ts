@@ -276,6 +276,8 @@ export interface PrivacyInfo {
     sweep_minutes: number
     unshared_upload_hours: number
     backup_days: number
+    /** How long access records are kept: the web server's log and the activity log. */
+    access_days: number
     /** Whether each backup is also kept, encrypted, off the server. */
     backup_offsite: boolean
     /** How much longer the off-site storage's own snapshots can keep a copy. */

@@ -15,6 +15,7 @@ struct GcStats {
     int strayFilesRemoved = 0;
     int thumbnailsRendered = 0;
     int avatarsRemoved = 0;
+    int activityPruned = 0;
     std::int64_t bytesReclaimed = 0;
 };
 

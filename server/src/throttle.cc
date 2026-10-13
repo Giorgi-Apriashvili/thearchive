@@ -120,7 +120,12 @@ std::string waitPhrase(std::int64_t seconds) {
 
 }  // namespace
 
-std::optional<std::string> clientAddress(const drogon::HttpRequestPtr& req) {
+namespace {
+
+// The client as clientAddress() resolves it, before any formatting: the peer, or the
+// rightmost X-Forwarded-For entry when the peer is our own proxy. Empty when what is left
+// is itself private.
+std::optional<Address> resolvedClient(const drogon::HttpRequestPtr& req) {
     const std::string peerText = req->peerAddr().toIp();
     std::string candidate = peerText;
 
@@ -133,9 +138,35 @@ std::optional<std::string> clientAddress(const drogon::HttpRequestPtr& req) {
             candidate = forwarded.substr(comma == std::string::npos ? 0 : comma + 1);
         }
     }
-
     const auto client = parseAddress(candidate);
     if (!client || isPrivate(*client)) {
+        return std::nullopt;
+    }
+    return client;
+}
+
+}  // namespace
+
+std::optional<std::string> clientNetwork(const drogon::HttpRequestPtr& req) {
+    const auto client = resolvedClient(req);
+    if (!client) {
+        return std::nullopt;
+    }
+    char text[INET6_ADDRSTRLEN] = {};
+    unsigned char masked[16] = {};
+    if (!client->v6) {
+        std::memcpy(masked, client->bytes, 3);
+        inet_ntop(AF_INET, masked, text, sizeof text);
+        return std::string{text} + "/24";
+    }
+    std::memcpy(masked, client->bytes, 6);
+    inet_ntop(AF_INET6, masked, text, sizeof text);
+    return std::string{text} + "/48";
+}
+
+std::optional<std::string> clientAddress(const drogon::HttpRequestPtr& req) {
+    const auto client = resolvedClient(req);
+    if (!client) {
         return std::nullopt;
     }
     return keyFor(*client);

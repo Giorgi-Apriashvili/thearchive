@@ -12,6 +12,7 @@
 #include <system_error>
 #include <vector>
 
+#include "activity.h"
 #include "crypto.h"
 #include "httputil.h"
 #include "mimetype.h"
@@ -76,6 +77,12 @@ std::string suppliedPassword(const drogon::HttpRequestPtr& req) {
 ShareRow authoriseShare(Database& db, const Auth& auth, const std::string& token,
                         const drogon::HttpRequestPtr& req);
 
+// How a link is named in the activity log: by its title, never by its token, which would
+// make the log a way into it.
+std::string linkLabel(const std::string& title) {
+    return "“" + (title.empty() ? std::string{"Untitled"} : title) + "”";
+}
+
 void requireSharePassword(const Auth& auth, const ShareRow& share,
                           const drogon::HttpRequestPtr& req) {
     if (share.passwordHash.empty()) {
@@ -98,6 +105,8 @@ void requireSharePassword(const Auth& auth, const ShareRow& share,
     requireNotThrottled(auth.throttle(), client, target);
     if (!crypto::verifyPassword(share.passwordHash, supplied)) {
         auth.throttle().failed(client, target);
+        activity::record(req, auth.userForSession(req->getCookie(kSessionCookie)),
+                         "link.password_failed", linkLabel(share.title));
         // 401 rather than 403: the client can usefully retry with a credential.
         throw HttpError{401, "this link requires a password"};
     }
@@ -458,6 +467,9 @@ namespace {
 void recordDownload(Database& db, const Auth& auth, const drogon::HttpRequestPtr& req,
                     const ShareRow& share, const std::optional<std::string>& filename) {
     const auto viewer = auth.userForSession(req->getCookie(kSessionCookie));
+    activity::record(req, viewer, "link.downloaded",
+                     linkLabel(share.title) + ": " +
+                         (filename ? *filename : std::string{"everything, as a zip"}));
     if (viewer && viewer->id == share.ownerId) {
         return;
     }
@@ -625,6 +637,9 @@ void registerShareRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
                     attachUploads(db, shareId, user.id, body["uploads"], now);
 
                 tx.commit();
+                activity::record(req, user, "link.created",
+                                 linkLabel(title) + " · " +
+                                     std::to_string(body["uploads"].size()) + " file(s)");
 
                 Json::Value out;
                 out["token"] = token;
@@ -662,6 +677,10 @@ void registerShareRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
                     if (db.changes() == 0) {
                         throw HttpError{404, "no such share"};
                     }
+                    auto named = db.prepare("SELECT COALESCE(title, '') FROM shares WHERE token = ?");
+                    named.bind(1, token);
+                    activity::record(req, user, "link.removed",
+                                     linkLabel(named.step() ? named.columnText(0) : ""));
                     Json::Value out;
                     out["revoked"] = true;
                     return drogon::HttpResponse::newHttpJsonResponse(out);
@@ -729,9 +748,18 @@ void registerShareRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
                     }
                     tx.commit();
 
-                    auto read = db.prepare("SELECT visibility, expires_at FROM shares WHERE id = ?");
+                    auto read = db.prepare(
+                        "SELECT visibility, expires_at, COALESCE(title, '') FROM shares WHERE id = ?");
                     read.bind(1, shareId);
                     read.step();
+                    std::string change;
+                    if (wanted) change = *wanted;
+                    if (expiresAt) {
+                        change += std::string{change.empty() ? "" : ", "} + "expires in " +
+                                  std::to_string(clampExpiryDays(json)) + " day(s)";
+                    }
+                    activity::record(req, user, "link.changed",
+                                     linkLabel(read.columnText(2)) + ": " + change);
                     Json::Value out;
                     out["visibility"] = read.columnText(0);
                     out["expires_at"] = static_cast<Json::Int64>(read.columnInt(1));
@@ -745,6 +773,11 @@ void registerShareRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
                 const ShareRow share = authoriseShare(db, auth, token, req);
                 const auto viewer = auth.userForSession(req->getCookie(kSessionCookie));
                 const bool isOwner = viewer && viewer->id == share.ownerId;
+                // Owners open their own links constantly from "Your links"; that is not
+                // worth a record. Anyone else opening one is.
+                if (!isOwner) {
+                    activity::record(req, viewer, "link.opened", linkLabel(share.title));
+                }
 
                 Json::Value out;
                 out["token"] = token;
@@ -893,6 +926,13 @@ void registerShareRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
                 out["total_bytes"] = static_cast<Json::Int64>(totals.columnInt(1));
                 LOG_INFO << "share " << shareId << ": " << body["uploads"].size()
                          << " file(s) added, " << added << " bytes, by user " << user.id;
+                {
+                    auto named = db.prepare("SELECT COALESCE(title, '') FROM shares WHERE id = ?");
+                    named.bind(1, shareId);
+                    activity::record(req, user, "link.files_added",
+                                     linkLabel(named.step() ? named.columnText(0) : "") + ": " +
+                                         std::to_string(body["uploads"].size()) + " file(s)");
+                }
                 return drogon::HttpResponse::newHttpJsonResponse(out);
             }));
         },
@@ -918,14 +958,16 @@ void registerShareRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
                 }
 
                 std::string hash;
+                std::string removedName;
                 {
                     auto find = db.prepare(
-                        "SELECT blob_sha256 FROM share_files WHERE id = ? AND share_id = ?");
+                        "SELECT blob_sha256, filename FROM share_files WHERE id = ? AND share_id = ?");
                     find.bind(1, wanted).bind(2, share.id);
                     if (!find.step()) {
                         throw HttpError{404, "no such file in this share"};
                     }
                     hash = find.columnText(0);
+                    removedName = find.columnText(1);
                 }
 
                 std::int64_t remaining = 0;
@@ -960,6 +1002,8 @@ void registerShareRoutes(Database& db, Auth& auth, const fs::path& dataDir) {
                 }
 
                 const bool reclaimed = storage::deleteIfOrphaned(db, dataDir, hash);
+                activity::record(req, user, revoked ? "link.removed" : "link.file_removed",
+                                 linkLabel(share.title) + ": " + removedName);
 
                 Json::Value out;
                 out["removed"] = true;

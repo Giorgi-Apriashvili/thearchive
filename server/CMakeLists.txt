@@ -103,6 +103,7 @@ add_executable(thearchive
     src/privacy.cc
     src/profiles.cc
     src/text.cc
+    src/activity.cc
     src/inbox.cc
     src/notifications.cc
 )

@@ -34,3 +34,6 @@ Thumbs.db
 
 # Deployment secrets — host-specific, never committed
 deploy/.env
+
+# Caddy access log, when ARCHIVE_LOG_DIR is left at its default
+deploy/logs/

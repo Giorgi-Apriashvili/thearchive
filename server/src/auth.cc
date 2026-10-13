@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <regex>
 
+#include "activity.h"
 #include "crypto.h"
 
 namespace archive {
@@ -398,6 +399,7 @@ void registerAuthRoutes(Auth& auth) {
                 }
                 const auto username = normaliseUsername(requireString(*json, "username"));
                 const auto token = auth.bootstrapAdmin(username, requireString(*json, "password"));
+                activity::record(req, auth.userForSession(token), "auth.bootstrap");
                 return sessionResponse(token, username);
             }));
         },
@@ -415,6 +417,7 @@ void registerAuthRoutes(Auth& auth) {
                 const auto username = normaliseUsername(requireString(*json, "username"));
                 const auto token = auth.registerUser(requireString(*json, "invite"), username,
                                                      requireString(*json, "password"));
+                activity::record(req, auth.userForSession(token), "auth.register");
                 return sessionResponse(token, username);
             }));
         },
@@ -430,8 +433,17 @@ void registerAuthRoutes(Auth& auth) {
                     throw HttpError{400, "expected a JSON body"};
                 }
                 const auto username = normaliseUsername(requireString(*json, "username"));
-                const auto token = auth.login(username, requireString(*json, "password"),
-                                              clientAddress(req));
+                std::string token;
+                try {
+                    token = auth.login(username, requireString(*json, "password"),
+                                       clientAddress(req));
+                } catch (const HttpError& e) {
+                    if (e.status() == 401 || e.status() == 429) {
+                        activity::recordFailedLogin(req, username, e.status() == 429);
+                    }
+                    throw;
+                }
+                activity::record(req, auth.userForSession(token), "auth.login");
                 return sessionResponse(token, username);
             }));
         },
@@ -442,6 +454,9 @@ void registerAuthRoutes(Auth& auth) {
         [&auth](const drogon::HttpRequestPtr& req,
                 std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
             callback(guarded([&] {
+                if (const auto user = auth.userForSession(req->getCookie(kSessionCookie))) {
+                    activity::record(req, user, "auth.logout");
+                }
                 auth.logout(req->getCookie(kSessionCookie));
                 Json::Value body;
                 body["ok"] = true;
@@ -465,9 +480,17 @@ void registerAuthRoutes(Auth& auth) {
                 const Json::Value& json = requireJson(req, holder);
                 // The caller's own cookie is what survives the purge, so it is passed
                 // down rather than re-read inside Auth.
-                auth.changePassword(user, requireString(json, "current_password"),
-                                    requireString(json, "new_password"),
-                                    req->getCookie(kSessionCookie), clientAddress(req));
+                try {
+                    auth.changePassword(user, requireString(json, "current_password"),
+                                        requireString(json, "new_password"),
+                                        req->getCookie(kSessionCookie), clientAddress(req));
+                } catch (const HttpError& e) {
+                    if (e.status() == 401 || e.status() == 429) {
+                        activity::record(req, user, "auth.password_change_failed");
+                    }
+                    throw;
+                }
+                activity::record(req, user, "auth.password_changed");
                 LOG_INFO << "user " << user.username << " changed their password";
                 Json::Value body;
                 body["ok"] = true;
@@ -509,6 +532,7 @@ void registerAuthRoutes(Auth& auth) {
                 const User user = requireRole(req, auth, "privileged");
                 Json::Value body;
                 body["code"] = auth.createInvite(user.id);
+                activity::record(req, user, "invite.created");
                 return drogon::HttpResponse::newHttpJsonResponse(body);
             }));
         },

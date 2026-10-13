@@ -95,6 +95,7 @@ Each drives a real server over HTTP; none needs a fixture or a mock.
 ./server/tests/chat.sh     # rooms, invitations, blocks, admin removal
 ./server/tests/profiles.sh # profiles, pictures and what a picture keeps of its original
 ./server/tests/sending.sh  # links attached in chat and sent to someone's inbox
+./server/tests/activity.sh # the activity log: what it records, what it never does, who reads it
 ```
 
 After any **frontend** change, also run the browser check before deploying:
@@ -232,6 +233,19 @@ never happens alerts when the grace time runs out. Off-site and disk problems ar
 without failing the script, so they never block an update.
 
 Use each service's "send test notification" once to make sure alerts actually arrive.
+
+### Access records
+
+Caddy writes its access log to `ARCHIVE_LOG_DIR` (set it in `.env`, beside the data and
+backups), one JSON object per line, rolled daily and kept 90 days. Link tokens, cookies and
+share passwords are removed and addresses shortened before anything is written. To read it:
+
+```bash
+tail -f "$ARCHIVE_LOG_DIR/access.log" | jq -c '{t: .ts|todate, ip: .request.remote_ip, m: .request.method, uri: .request.uri, s: .status}'
+```
+
+The site's own activity log — sign-ins, downloads, uploads, link and account changes, with
+account names — is in the Control panel under **Activity**, kept for the same 90 days.
 
 ### Restoring a backup
 
