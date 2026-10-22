@@ -373,6 +373,16 @@
     )
   })
 
+  // The box grows with what's typed (up to its max height, then scrolls), whether the
+  // draft changed by typing, an emoji, a mention or being sent and cleared.
+  $effect(() => {
+    draft
+    const field = composer
+    if (!field) return
+    field.style.height = 'auto'
+    field.style.height = `${field.scrollHeight + field.offsetHeight - field.clientHeight}px`
+  })
+
   // Into the draft at the caret, keeping the composer focused for whatever comes next.
   function insertEmoji(emoji: string) {
     const field = composer
@@ -943,7 +953,7 @@
       {/each}
     </ul>
   {/if}
-  <form onsubmit={send} class="relative flex items-end gap-2">
+  <form onsubmit={send} class="relative flex flex-wrap items-end gap-2 sm:flex-nowrap">
     {#if candidates.length}
       <ul
         class="absolute bottom-full left-4 z-20 mb-1 w-48 overflow-hidden rounded-lg border border-ink-700 bg-ink-900 shadow-xl"
@@ -966,6 +976,9 @@
         {/each}
       </ul>
     {/if}
+    <!-- On a phone the tools take their own row, so the message box gets the full width
+         instead of what's left beside four buttons; from sm up it's all one line. -->
+    <div class="flex basis-full gap-2 sm:basis-auto">
     <div class="relative shrink-0">
       <button
         type="button"
@@ -1020,6 +1033,7 @@
       aria-label="Attach your links"
       class="shrink-0 rounded-lg border border-ink-700 px-2.5 py-2 text-xs text-ink-300 transition hover:border-ink-500"
     >+ Link</button>
+    </div>
     <textarea
       bind:this={composer}
       bind:value={draft}
@@ -1031,7 +1045,7 @@
       rows="1"
       maxlength="4000"
       placeholder="Message {room.name}"
-      class="max-h-32 min-h-[2.25rem] flex-1 resize-none rounded-lg border border-ink-700 bg-ink-900 px-3 py-2 text-sm outline-none focus:border-accent"
+      class="max-h-32 min-h-[2.25rem] min-w-0 flex-1 resize-none rounded-lg border border-ink-700 bg-ink-900 px-3 py-2 text-base outline-none placeholder:truncate focus:border-accent sm:text-sm"
     ></textarea>
     <button
       disabled={sending || photosBusy || (!draft.trim() && attachments.length === 0 && photosReady.length === 0)}
