@@ -456,6 +456,17 @@ printf '%s' "$hdrs" | grep -qi 'content-disposition: attachment' && ok "zip is a
 printf '%s' "$hdrs" | grep -qi 'filename\*=UTF-8.*Night' && ok "archive named after the share" \
     || bad "archive named after the share" "$(printf '%s' "$hdrs" | grep -i disposition)"
 
+# A Georgian title keeps its letters in the real name, and the ASCII fallback that
+# download managers and curl -J read spells them out instead of a row of placeholders.
+UZKA=$(upload "$WORK/z/first-photo.jpg")
+TOKKA=$(curl -s -b "$JAR" -X POST "$BASE/api/shares" -H 'Content-Type: application/json' \
+    -d "{\"uploads\":[\"$UZKA\"],\"title\":\"უფლისციხე 2026\",\"public\":true}" | jget token)
+check "Georgian title: real name and Latin fallback" \
+    "$(curl -s -D - -o /dev/null "$BASE/d/$TOKKA/all.zip" | tr -d '\r' \
+        | sed -n 's/^[Cc]ontent-[Dd]isposition: //p')" \
+    "attachment; filename=\"uplistsikhe 2026.zip\"; filename*=UTF-8''$(python3 -c \
+        'import urllib.parse;print(urllib.parse.quote("უფლისციხე 2026.zip", safe=""))')"
+
 unzip -t "$WORK/all.zip" >/dev/null 2>&1 && ok "archive passes unzip -t" \
     || bad "archive passes unzip -t" "$(unzip -t "$WORK/all.zip" 2>&1 | tail -2)"
 check "holds three entries" "$(unzip -l "$WORK/all.zip" | tail -1 | awk '{print $2}')" "3"

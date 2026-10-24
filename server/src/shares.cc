@@ -212,13 +212,63 @@ Json::Value filesOf(Database& db, std::int64_t shareId) {
     return files;
 }
 
-// RFC 6266: the plain filename= is a fallback for ancient clients, filename*= carries
-// the real UTF-8 name. Quotes and backslashes are stripped from the fallback so a
-// crafted filename cannot break out of the quoted string and inject header directives.
+// The code point starting at text[i], advancing i past it. Nothing for a malformed or
+// overlong sequence, with i moved on by one byte so the caller can carry on.
+std::optional<char32_t> nextCodePoint(const std::string& text, std::size_t& i) {
+    const auto lead = static_cast<unsigned char>(text[i]);
+    const std::size_t length = lead < 0x80 ? 1 : (lead >> 5) == 0x6 ? 2 : (lead >> 4) == 0xE ? 3
+                               : (lead >> 3) == 0x1E ? 4 : 0;
+    if (length == 0 || i + length > text.size()) {
+        ++i;
+        return std::nullopt;
+    }
+    char32_t cp = length == 1 ? lead : lead & (0x7F >> length);
+    for (std::size_t k = 1; k < length; ++k) {
+        const auto next = static_cast<unsigned char>(text[i + k]);
+        if ((next & 0xC0) != 0x80) {
+            ++i;
+            return std::nullopt;
+        }
+        cp = (cp << 6) | (next & 0x3F);
+    }
+    static constexpr char32_t kSmallest[] = {0, 0, 0x80, 0x800, 0x10000};
+    if (cp < kSmallest[length] || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF)) {
+        ++i;
+        return std::nullopt;
+    }
+    i += length;
+    return cp;
+}
+
+// Georgian in Latin letters, by the national romanisation without its ejective
+// apostrophes (as on road signs: Mtskheta, not Mts'khet'a). Indexed from ა (U+10D0);
+// the capital Mtavruli forms (U+1C90 on) are the same letters.
+constexpr std::array<std::string_view, 39> kGeorgianLatin = {
+    "a", "b", "g", "d", "e", "v", "z", "t", "i", "k", "l", "m", "n",
+    "o", "p", "zh", "r", "s", "t", "u", "p", "k", "gh", "q", "sh", "ch",
+    "ts", "dz", "ts", "ch", "kh", "j", "h", "e", "y", "w", "q", "o", "f"};
+
+// RFC 6266: filename*= carries the real UTF-8 name, and every current browser reads it.
+// The plain filename= is for clients that read nothing else — download managers, curl -J,
+// wget — and must be ASCII, or they mangle each byte of a non-Latin name into a
+// placeholder. So Georgian is spelled out in Latin letters there, and anything else
+// non-ASCII becomes '_'. Quotes and backslashes are stripped from it too, so a crafted
+// filename cannot break out of the quoted string and inject header directives.
 std::string contentDisposition(const std::string& filename) {
     std::string fallback;
-    for (const char c : filename) {
-        fallback += (c == '"' || c == '\\' || static_cast<unsigned char>(c) < 0x20) ? '_' : c;
+    for (std::size_t i = 0; i < filename.size();) {
+        const auto cp = nextCodePoint(filename, i);
+        if (cp && *cp >= 0x20 && *cp < 0x7F && *cp != '"' && *cp != '\\') {
+            fallback += static_cast<char>(*cp);
+        } else if (cp && *cp >= 0x10D0 && *cp < 0x10D0 + kGeorgianLatin.size()) {
+            fallback += kGeorgianLatin[*cp - 0x10D0];
+        } else if (cp && *cp >= 0x1C90 && *cp < 0x1C90 + kGeorgianLatin.size()) {
+            std::string letter{kGeorgianLatin[*cp - 0x1C90]};
+            letter[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(letter[0])));
+            fallback += letter;
+        } else {
+            fallback += '_';
+        }
     }
 
     static constexpr char kHex[] = "0123456789ABCDEF";
@@ -342,13 +392,21 @@ std::uint32_t backfillCrc32(Database& db, const fs::path& path, const std::strin
 }
 
 // Filename for the archive itself. Falls back to the token so it is never empty, and
-// never carries a path separator into Content-Disposition.
+// never carries a path separator into Content-Disposition. Letters beyond ASCII are
+// kept — an album called უფლისციხე downloads as უფლისციხე.zip — except the C1 controls
+// and the General Punctuation block, home of the invisible and direction-changing
+// characters, which like ASCII punctuation become '-'.
 std::string archiveName(const std::string& title, const std::string& token) {
     std::string base;
-    for (const char c : title) {
-        const bool safe = std::isalnum(static_cast<unsigned char>(c)) || c == ' ' ||
-                          c == '-' || c == '_';
-        base += safe ? c : '-';
+    for (std::size_t i = 0; i < title.size();) {
+        const std::size_t start = i;
+        const auto cp = nextCodePoint(title, i);
+        const bool safe =
+            cp && (*cp < 0x80 ? std::isalnum(static_cast<int>(*cp)) || *cp == ' ' ||
+                                    *cp == '-' || *cp == '_'
+                              : *cp >= 0xA0 && !(*cp >= 0x2000 && *cp <= 0x206F) &&
+                                    *cp != 0xFEFF);
+        base += safe ? title.substr(start, i - start) : "-";
     }
     while (!base.empty() && base.back() == ' ') {
         base.pop_back();
